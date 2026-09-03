@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use or build upon this project, please cite it as below."
+title: "Agentic Shopping Autopilot: autonomous purchasing layer for user-side AI agents"
+type: software
+authors:
+  - family-names: Shramko
+    given-names: Andrii
+    email: zmei116@gmail.com
+repository-code: "https://github.com/AndriiShramko/agentic-shopping-autopilot"
+license: Apache-2.0
+date-released: "2026-08-31"
+keywords:
+  - agentic commerce
+  - AI agents
+  - autonomous checkout
+  - shopping agent
+  - AI payments
+  - Claude Code
+  - Codex
+  - Allegro
+  - OLX
+  - agent skills
+  - PSD2
+  - AP2
+abstract: >-
+  Open-source layer that lets any user-side AI agent (Claude Code, Codex CLI)
+  autonomously find, order and pay for goods on real e-commerce sites under a
+  pre-signed purchase mandate, with site-skills shared through a community
+  registry. MVP market: Poland (Allegro.pl, OLX.pl).

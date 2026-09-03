@@ -1,0 +1,73 @@
+# Карта селекторов allegro.pl — слоёная деградация: role → css → NL-fallback.
+# ⚠️ Все css-значения — TODO: заполнить при первой записи флоу (playwright codegen)
+# на живом сайте; role/NL рабочие как fallback уже сейчас.
+# После каждого зелёного smoke-прогона обновлять last_verified в SKILL.md.
+
+search_input:
+  role: {role: combobox, name: "Czego szukasz?"}
+  css: "TODO-verify"
+  fallback_nl: "поле поиска в шапке страницы"
+
+search_submit:
+  role: {role: button, name: "Szukaj"}
+  css: "TODO-verify"
+  fallback_nl: "кнопка поиска рядом с полем ввода"
+
+listing_item:
+  role: {role: link}
+  css: "TODO-verify (карточка оффера в выдаче: содержит цену, название, бейдж Smart)"
+  fallback_nl: "карточка товара в списке результатов"
+
+filter_smart:
+  role: {role: checkbox, name: "Smart!"}
+  css: "TODO-verify"
+  fallback_nl: "фильтр Smart! (бесплатная доставка) в левой колонке"
+
+price_on_card:
+  css: "TODO-verify"
+  fallback_nl: "итоговая цена на карточке товара, включая варианты доставки"
+
+variant_selector:
+  css: "TODO-verify"
+  fallback_nl: "выбор обязательной вариации (размер/цвет) на карточке товара"
+
+add_to_cart:
+  role: {role: button, name: "Dodaj do koszyka"}
+  css: "TODO-verify"
+  fallback_nl: "кнопка добавления в корзину на карточке товара"
+
+buy_now:
+  role: {role: button, name: "Kup teraz"}
+  css: "TODO-verify"
+  fallback_nl: "кнопка немедленной покупки на карточке товара"
+
+cart_go_checkout:
+  role: {role: button, name: "Przejdź do dostawy"}
+  css: "TODO-verify"
+  fallback_nl: "кнопка перехода из корзины к доставке"
+
+delivery_option:
+  css: "TODO-verify"
+  fallback_nl: "выбор способа доставки (предпочитать Smart/Paczkomat из мандата)"
+
+payment_oneclick_card:
+  css: "TODO-verify"
+  fallback_nl: "сохранённая карта (płatność jednym kliknięciem) в списке способов оплаты"
+
+payment_allegro_pay:
+  css: "TODO-verify"
+  fallback_nl: "Allegro Pay в списке способов оплаты"
+
+pay_button:
+  role: {role: button, name: "Kupuję i płacę"}
+  css: "TODO-verify"
+  fallback_nl: "финальная кнопка оплаты; ПЕРЕД кликом — полный чек-лист мандата"
+
+order_status:
+  fallback_nl: "статус заказа в Moje zakupy (API истории покупок у Allegro нет — только UI/email)"
+
+endpoints:
+  # API-канал (быстрый путь для поиска; см. piotrlinski/allegro-open-mcp-server)
+  search: "GET https://api.allegro.pl/offers/listing  # scope после верификации приложения; иначе SERP"
+  bid: "PUT https://api.allegro.pl/bidding/offers/{offerId}/bid  # аукционы, scope allegro:api:bids"
+  oauth: "device flow: https://allegro.pl/auth/oauth/device"

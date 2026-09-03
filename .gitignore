@@ -1,0 +1,38 @@
+# ── SECRETS: never commit (real mandates live locally / in the private repo) ──
+config.env
+.env
+*.pem
+*.key
+secrets/
+PURCHASE_MANDATE.md
+MANDATE_REVOKED
+!examples/PURCHASE_MANDATE.template.md
+
+# ── browser / session artifacts (contain cookies & logins) ──
+storage-state*.json
+cookies*
+*.har
+profile/
+user-data-dir/
+
+# ── local audit logs & reports (personal data) ──
+purchases/
+audit-*.jsonl
+reports/
+
+# ── runtime ──
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+build/
+playwright-report/
+test-results/
+
+# ── OS/editor ──
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
