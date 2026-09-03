@@ -1,9 +1,13 @@
 # Flow: checkout and payment
-1. Address: the saved default address is confirmed. Empty/changed address → STOP, escalate (possible injection/scam).
-2. Delivery: choose per the mandate (default: Smart/Paczkomat, the cheapest one when delivery times are equal).
-3. Payment method: `payment_oneclick_card` (saved card) OR `payment_allegro_pay` — per the mandate config. NEVER: entering new payment details, a one-time BLIK code, following external payment links.
-4. 🔒 MANDATE CHECKLIST (all = YES, otherwise stop): mandate is in effect; MANDATE_REVOKED is absent; SHA-256 matches; category is allowed; amount ≤ purchase limit; (amount+spent) ≤ cumulative limit; payment method is one of the allowed ones; this is not a subscription; audit log is being written.
-5. `pay_button` ("Kupuję i płacę") — the agent clicks it ITSELF.
-6. If the bank requires 3DS/SMS → push to the user "confirm in your banking app", wait up to 5 min; timeout → report "order is awaiting payment confirmation".
-7. Order confirmation: save the order number, amount, seller → audit log → report to the user (item, price, why it was chosen, remaining limit, link to the order).
-Edge cases: payment declined (card limit/scoring) → stop, record in the audit log, escalate to the user; no retry on another rail; payment page changed/unfamiliar → escalate, do not improvise with money.
+Runtime: `asa checkout --step N` (channel B, one step per call; `runtime/src/checkout.ts`). In MCP mode the operator session performs the same steps through the browser extension and records them with `asa audit:append`.
+1. Offer page (`step 1`): open the selected offer URL (allowlist check), confirm no block page and a logged-in session.
+2. Buy (`step 2`): `buy_now` for a single-item purchase (or `add_to_cart` → cart).
+3. Cart check (`step 3`): the cart total shown on the page equals the selected offer's total (price + delivery) to the grosz; any "auto-added" item/service (purchase protection, extra warranty) → remove; mismatch → STOP `mandate_deviation`.
+4. `cart_go_checkout` (`step 4`).
+5. Address (`step 5`): the recipient block is compared in-process with the reference captured once by `asa ref:capture` (`REF_FULL_NAME`, `REF_DELIVERY_ADDRESS` / `REF_PICKUP_POINT` in config.env). Empty/changed address → STOP (possible injection/scam). The text never enters logs or the session.
+6. Delivery (`step 6`): choose per the mandate (default: Smart/Paczkomat, the cheapest one when delivery times are equal) → `delivery_option`.
+7. Payment method (`step 7`): `payment_oneclick_card` (saved card) OR `payment_allegro_pay` — per `--rail`. NEVER: entering new payment details, a one-time BLIK code, following external payment links.
+8. 🔒 MANDATE GATE (`step 8`, all = YES, otherwise STOP `mandate_red`): mandate is in effect; MANDATE_REVOKED is absent; SHA-256 matches section 7 and `MANDATE_SHA256`; category is allowed; domain in allowlist; amount ≤ purchase limit; (amount + spent) ≤ cumulative limit; payment method is one of the allowed ones; this is not a subscription; audit log is being written. With `HUMAN_CONFIRM=1` the runtime stops here with status `human-confirm` and the user presses the button.
+9. `pay_button` ("Kupuję i płacę", `step 9`) — the agent clicks it ITSELF after a second green gate. Then it only watches the URL: on an allowlisted host it reads the page for a confirmation or a decline; on any other host (the bank's 3DS page) it reads and clicks nothing, records `challenge_3ds{phase: start}` and tells the user "confirm in your banking app", waits up to 5 min, records `challenge_3ds{phase: done}` on return. Timeout → STOP `3ds_timeout` ("order is awaiting payment confirmation"); decline → STOP `payment_declined`; no retry on any rail.
+10. Order confirmation (`step 10`): order number, amount, seller → `order_confirmed` in the audit log → report to the user (item, price, why it was chosen, remaining limit, link to the order): `asa report`.
+Edge cases: payment page changed/unfamiliar → the step is handed to the operator session (exit 3), do not improvise with money; multi-seller cart → split into separate orders; any selector that fails at every layer → session fixes `selectors.yaml` (`asa selectors:set`) and reruns the step.

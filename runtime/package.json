@@ -1,0 +1,28 @@
+{
+  "name": "@agentic-shopping-autopilot/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deterministic runtime for Agentic Shopping Autopilot: purchase-mandate checker, CDP browser channel, layered selector resolver, append-only audit log, reports.",
+  "license": "Apache-2.0",
+  "author": "Andrii Shramko <zmei116@gmail.com>",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "bin": { "asa": "./dist/cli.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "cli": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "playwright": "^1.62.1",
+    "yaml": "^2.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

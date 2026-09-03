@@ -1,0 +1,36 @@
+# Synthetic selector map for the resolver tests (mirrors the layering of skills/allegro.pl/selectors.yaml).
+search_input:
+  role: {role: combobox, name: "Czego szukasz?"}
+  css: "TODO-verify"
+  fallback_nl: "search field in the page header"
+
+add_to_cart:
+  role: {role: button, name: "Dodaj do koszyka"}
+  css: "button[data-analytics-click='add-to-cart']"   # keep this comment: write-back must preserve it
+  fallback_nl: "add-to-cart button on the product card"
+
+buy_now:
+  role: {role: button, name: "Nie ma takiego przycisku"}
+  css: "[data-role='buy-now']"
+  fallback_nl: "immediate purchase button"
+
+pay_button:
+  role: {role: button, name: "Kupuję i płacę"}
+  css: "TODO-verify"
+  fallback_nl: "final payment button"
+
+delivery_option:
+  role: {role: radio, name: "Paczkomat InPost (brak w fixture)"}
+  css: "TODO-verify"
+  fallback_nl: "delivery method selection (prefer Smart/Paczkomat from the mandate)"
+
+cart_go_checkout:
+  role: {role: button, name: "Przejdź do dostawy"}
+  css: "TODO-verify"
+  fallback_nl: "button to go from the cart to delivery"
+
+domains:
+  - "pay.allegro-pay.test"
+
+endpoints:
+  search: "GET https://api.allegro.pl/offers/listing"

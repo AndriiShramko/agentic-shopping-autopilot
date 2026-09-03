@@ -1,7 +1,9 @@
 # allegro.pl selector map — layered degradation: role → css → NL fallback.
-# ⚠️ All css values are TODO: fill them in during the first flow recording (playwright codegen)
-# on the live site; role/NL already work as a fallback today.
-# After every green smoke run, update last_verified in SKILL.md.
+# ⚠️ All css values are TODO: they are filled in during the first recorded checkout flow, captured from the
+# live page in the maintainer's own logged-in Chrome (data-* attributes first, then stable structure; no
+# playwright codegen). role/NL already work as a fallback today; an unresolved step is handed to the
+# operator session (runtime exit code 3), never guessed.
+# After every green run from the maintainer's profile, update last_verified in SKILL.md.
 
 search_input:
   role: {role: combobox, name: "Czego szukasz?"}
@@ -66,8 +68,13 @@ pay_button:
 order_status:
   fallback_nl: "order status in Moje zakupy (Allegro has no purchase history API — UI/email only)"
 
+# Hosts the runtime may act on in addition to *.allegro.pl and *.payu.com (runtime/src/allowlist.ts).
+# The Allegro Pay host is recorded here during the first checkout recording (`asa selectors:domain HOST`).
+# The bank's 3DS page is deliberately NOT listed: during a challenge the runtime neither reads nor clicks.
+domains: []
+
 endpoints:
-  # API channel (fast path for search; see piotrlinski/allegro-open-mcp-server)
+  # API channel (fast path for search): OAuth2 device flow + GET /offers/listing, implemented in runtime/src/api.ts
   search: "GET https://api.allegro.pl/offers/listing  # scope after app verification; otherwise SERP"
-  bid: "PUT https://api.allegro.pl/bidding/offers/{offerId}/bid  # auctions, scope allegro:api:bids"
+  bid: "PUT https://api.allegro.pl/bidding/offers/{offerId}/bid  # auctions, scope allegro:api:bids (out of MVP scope)"
   oauth: "device flow: https://allegro.pl/auth/oauth/device"

@@ -36,3 +36,7 @@ test-results/
 Thumbs.db
 .idea/
 .vscode/
+
+# ── runtime state and raw (un-redacted) fixtures ──
+runtime/.state/
+runtime/tests/fixtures/raw/

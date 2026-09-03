@@ -1,8 +1,9 @@
 # Flow: search
 Preconditions: a valid mandate has been read; the criteria (query, budget, category) are known.
-1. CHANNEL A (priority): API `GET /offers/listing` (query, category, price range, sort) → JSON of offers. If 403 (no verification) → channel B.
-2. CHANNEL B: browser → `search_input` → query → `search_submit` → if needed `filter_smart`, price filter per the mandate.
-3. Normalization of each offer: {id, title, price, shipping cost, Smart?, seller rating, number of sales, url}.
-4. Ranking: (price+shipping) ↑, seller rating ≥98%, Smart preferred.
-Postcondition invariant: ≥1 offer within the mandate limit; otherwise — report "not found within budget", no purchase.
-Edge cases: 0 results → broaden the query with synonyms (1 attempt) → report; cookie consent popup → accept and continue.
+1. CHANNEL A (priority): API `GET /offers/listing` (query, price range, sort, Buy-Now only) → JSON of offers (`runtime/src/api.ts`, OAuth2 device flow or client credentials). If 403 (application not verified) → channel B.
+2. CHANNEL B: browser listing page in the user's own logged-in profile, one page per query at human pace (`runtime/src/serp.ts`): `search_input` → query → `search_submit` (or the listing URL with the price ceiling), if needed `filter_smart`, price filter per the mandate. A block page = stop.
+3. Normalization of each offer (`runtime/src/offers.ts`): `{id, title, url, price_pln, shipping_pln, smart, free_delivery, seller, seller_rating, super_seller, sales_count, condition, format, source, delivery_options}`. In MCP mode the operator session writes the same records into `runtime/.state/offers.json` and runs `asa search --source state`.
+4. Mechanical filter + ranking (`runtime/src/rank.ts`): price + cheapest delivery ≤ per-purchase limit and ≤ remaining aggregate limit; condition new; Buy-Now only; host allegro.pl; seller rating ≥ 98 % or Smart! / Super Seller. Sort by total ascending, Smart / Paczkomat preferred on ties. Result → `.state/offers.json` (accepted + rejected with reasons) and the audit event `search_done`.
+5. Match to the user's request is decided by the operator session, not mechanically: `asa select --id … --category … --rationale "…"` records the choice and the rationale (`offer_selected`).
+Postcondition invariant: ≥1 accepted offer within the mandate limit; otherwise — report "not found within budget", no purchase.
+Edge cases: 0 results → broaden the query with synonyms (1 attempt) → report; cookie consent popup → accept and continue; unknown delivery cost → the offer is rejected as `shipping_unknown` until the product page confirms it.
