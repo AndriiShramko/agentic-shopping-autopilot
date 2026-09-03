@@ -25,6 +25,12 @@ export interface Offer {
   source: OfferSource;
   /** Delivery option names seen (e.g. "Paczkomat InPost"), when known. */
   delivery_options?: string[];
+  /** 'offer' = /oferta/<id>; 'product' = /produkt/<uuid> card that groups several offers (default offer bought). */
+  kind?: 'offer' | 'product';
+  /** Price incl. the cheapest delivery as shown on the card ("<total> zł z dostawą"), when known. */
+  total_with_delivery_pln?: number | null;
+  sponsored?: boolean;
+  seller_type?: 'firma' | 'osoba' | 'unknown';
 }
 
 export function offerUrl(id: string): string {
@@ -105,5 +111,12 @@ export function coerceOffer(raw: Record<string, unknown>, source: OfferSource = 
     format: fmt === 'BUY_NOW' || fmt === 'AUCTION' || fmt === 'ADVERTISEMENT' ? fmt : 'unknown',
     source,
     delivery_options: Array.isArray(raw.delivery_options) ? (raw.delivery_options as unknown[]).map(String) : undefined,
+    kind: raw.kind === 'product' ? 'product' : raw.kind === 'offer' ? 'offer' : undefined,
+    total_with_delivery_pln:
+      raw.total_with_delivery_pln === null || raw.total_with_delivery_pln === undefined
+        ? undefined
+        : parsePln(raw.total_with_delivery_pln as string | number),
+    sponsored: raw.sponsored === true ? true : undefined,
+    seller_type: raw.seller_type === 'firma' || raw.seller_type === 'osoba' ? raw.seller_type : undefined,
   };
 }

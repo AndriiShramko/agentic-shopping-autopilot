@@ -1,0 +1,45 @@
+# a11y snapshot of ONE offer card on an allegro.pl listing page (channel A, logged-in profile, 2026-09-04),
+# trimmed to the card block. No account data: the card carries only public offer facts.
+# Structure the SERP extractor relies on: article > link(/events/clicks?…redirect=/oferta/…-<id> | /produkt/…-<uuid> | /oferta/…-<id>),
+# heading (title), "<price> zł aktualna cena", "<total> zł z dostawą", "Firma"/"Osoba prywatna", "od Super Sprzedawcy",
+# "Allegro Smart!" (image alt "Smart!"), delivery promise text, "dodaj do koszyka" button (data-role-type=add-to-cart-button).
+article
+  link href="https://allegro.pl/events/clicks?emission_unit_id=…&type=OFFER&redirect=https%3A%2F%2Fallegro.pl%2Foferta%2Fwkrety-ciesielskie-do-drewna-4x40-stozkowe-torx-500szt-40040-pan-lacznik-18274795456%3Fbi_s%3Dads&placement=productlisting:desktop:query"
+    image "WKRĘTY CIESIELSKIE DO DREWNA 4x40 STOŻKOWE TORX 500szt 40040 Pan Łącznik"
+  heading "WKRĘTY CIESIELSKIE DO DREWNA 4x40 STOŻKOWE TORX 500szt 40040 Pan Łącznik"
+    link "WKRĘTY CIESIELSKIE DO DREWNA 4x40 STOŻKOWE TORX 500szt 40040 Pan Łącznik" href="(same /events/clicks redirect)"
+  group "5,00 na 5, 58 ocen produktu"
+    generic "5,00"
+    generic "(58)"
+  button "425 osób kupiło ostatnio zobacz szczegóły"
+    generic "425 osób"
+    generic "kupiło ostatnio"
+  generic "Opakowanie"
+  generic "sztuki"
+  button "Dodaj do porównania WKRĘTY CIESIELSKIE DO DREWNA 4x40 STOŻKOWE TORX 500szt 40040 Pan Łącznik"
+  generic "Sponsorowane"
+  button "Sponsorowane pokaż podpowiedź"
+  generic "19,87 zł aktualna cena"
+    generic "19,"
+  generic "30,36 zł z dostawą"
+  image "Pan_Lacznik"
+  generic "Firma"
+  generic "od Super Sprzedawcy"
+    button "Super Sprzedawca zobacz szczegóły"
+      image "Super Sprzedawcy"
+  button "Allegro Smart! zobacz szczegóły"
+    image "Smart!"
+  generic "dostawa w sobotę"
+  generic "– kup do 17:30"
+  button "dostawa w sobotę – kup do 17:30 zobacz szczegóły"
+    image "Informacja"
+  button
+    generic "dodaj do koszyka"
+  button "Dodaj do ulubionych WKRĘTY CIESIELSKIE DO DREWNA 4x40 STOŻKOWE TORX 500szt 40040 Pan Łącznik"
+# Organic (non-sponsored) card, same layout, product link instead of an offer link:
+#   link href="https://allegro.pl/produkt/wkrety-do-drewna-4-x-40-mm-10-szt-4ee1a3a1-ad1f-4edb-965a-78b98aa9b079"
+#   innerText: "dostępne warianty 4X40 WKRĘT DO DREWNA DIN 7997 STOŻKOWY NIERDZEWNY A2 10SZT 5,00(5) 10 osób kupiło ostatnio
+#               Opakowanie sztuki Waga 0.1 kg DODAJ DO PORÓWNANIA 1,00 zł 11,49 zł z dostawą Firma od Super Sprzedawcy
+#               dostawa w sobotę – kup do 12:15 DODAJ DO KOSZYKA"
+# Page facts: search input  role=combobox data-role=search-input (form data-role=search-form), placeholder "czego szukasz?";
+#             search button aria-label=szukaj data-role=search-button; add-to-cart button data-role-type=add-to-cart-button.

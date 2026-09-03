@@ -18,7 +18,7 @@ import type { RuntimeConfig } from './config.js';
 import { checkMandate, formatCheck } from './mandate.js';
 import { parsePln } from './offers.js';
 import { resolveSelector, type SelectorMap } from './selectors.js';
-import { EXIT, writeAriaSnapshot, writeStepResult, stripQuery, type StepStatus } from './state.js';
+import { EXIT, writeAriaSnapshot, writeState, writeStepResult, stripQuery, type StepStatus } from './state.js';
 import { StopError, type RunContext } from './stop.js';
 
 export const FLOW = 'checkout';
@@ -28,10 +28,15 @@ export interface SelectedOffer {
   id: string;
   url: string;
   title: string;
+  /** Ceiling agreed at selection time (price + delivery as shown on the listing). */
   total_pln: number;
   seller: string;
   category: string;
   rationale?: string;
+  /** Concrete offer id seen on the product page (data-analytics-interaction-value of #add-to-cart-button). */
+  offer_id?: string;
+  /** Total actually shown at cart / checkout (may be lower than total_pln, e.g. Smart delivery applied). */
+  actual_total_pln?: number;
 }
 
 export interface CheckoutEnv {
@@ -147,7 +152,12 @@ export async function runStep(env: CheckoutEnv, step: number): Promise<StepOutco
       await sleep(env.paceMs ?? 1200);
       await guardPage(env, step);
       if (!(await detectLoggedIn(page))) throw new StopError('logged_out', { step });
-      return done('ok', 'offer page open, logged in');
+      const offerId = await readOfferId(page);
+      if (offerId) {
+        selected.offer_id = offerId;
+        writeState('selected.json', selected);
+      }
+      return done('ok', 'offer page open, logged in', offerId ? { offer_id: offerId } : undefined);
     }
     case 2: {
       await guardPage(env, step);
@@ -161,8 +171,10 @@ export async function runStep(env: CheckoutEnv, step: number): Promise<StepOutco
         await needsDecision(env, step, 'cart total not found on page');
         return { code: EXIT.DECISION, status: 'needs-decision' };
       }
-      if (Math.abs(total - selected.total_pln) > 0.01) throw new StopError('mandate_deviation', { step, expected_pln: selected.total_pln, seen_pln: total });
-      return done('ok', 'cart total matches selected offer', { total_pln: total });
+      if (total > selected.total_pln + 0.01) throw new StopError('mandate_deviation', { step, expected_pln: selected.total_pln, seen_pln: total });
+      selected.actual_total_pln = total;
+      writeState('selected.json', selected);
+      return done('ok', total < selected.total_pln ? 'cart total below the selected ceiling' : 'cart total matches selected offer', { total_pln: total });
     }
     case 4: {
       await guardPage(env, step);
@@ -189,8 +201,10 @@ export async function runStep(env: CheckoutEnv, step: number): Promise<StepOutco
     }
     case 8: {
       await guardPage(env, step);
-      const total = (await readPageTotal(page)) ?? selected.total_pln;
-      if (Math.abs(total - selected.total_pln) > 0.01) throw new StopError('mandate_deviation', { step, expected_pln: selected.total_pln, seen_pln: total });
+      const total = (await readPageTotal(page)) ?? selected.actual_total_pln ?? selected.total_pln;
+      if (total > selected.total_pln + 0.01) throw new StopError('mandate_deviation', { step, expected_pln: selected.total_pln, seen_pln: total });
+      selected.actual_total_pln = total;
+      writeState('selected.json', selected);
       const g = gate(env, total);
       process.stdout.write(g.text + '\n');
       if (!g.ok) throw new StopError('mandate_red', { step, amount_pln: total });
@@ -202,7 +216,8 @@ export async function runStep(env: CheckoutEnv, step: number): Promise<StepOutco
     }
     case 9: {
       await guardPage(env, step);
-      const total = (await readPageTotal(page)) ?? selected.total_pln;
+      const total = (await readPageTotal(page)) ?? selected.actual_total_pln ?? selected.total_pln;
+      if (total > selected.total_pln + 0.01) throw new StopError('mandate_deviation', { step, expected_pln: selected.total_pln, seen_pln: total });
       const g = gate(env, total);
       if (!g.ok) throw new StopError('mandate_red', { step, amount_pln: total });
       if (env.cfg.humanConfirm) return done('human-confirm', 'HUMAN_CONFIRM=1: not clicking the pay button', { amount_pln: total });
@@ -220,8 +235,9 @@ export async function runStep(env: CheckoutEnv, step: number): Promise<StepOutco
         await needsDecision(env, step, 'order id not found on the confirmation page');
         return { code: EXIT.DECISION, status: 'needs-decision' };
       }
-      audit.append({ ...ctx, event: 'order_confirmed', flow: FLOW, step, data: { order_id: orderId, amount_pln: selected.total_pln, seller: selected.seller, offer_url: selected.url, title: selected.title } });
-      return done('ok', `order ${orderId} confirmed`, { order_id: orderId, amount_pln: selected.total_pln });
+      const amount = selected.actual_total_pln ?? selected.total_pln;
+      audit.append({ ...ctx, event: 'order_confirmed', flow: FLOW, step, data: { order_id: orderId, amount_pln: amount, seller: selected.seller, offer_url: selected.url, offer_id: selected.offer_id, title: selected.title } });
+      return done('ok', `order ${orderId} confirmed`, { order_id: orderId, amount_pln: amount });
     }
     default:
       throw new Error(`unknown checkout step ${step} (1-10)`);
@@ -271,6 +287,17 @@ export async function waitForPaymentOutcome(env: CheckoutEnv, maxMs = 5 * 60_000
     await sleep(2000);
   }
   return { outcome: 'timeout', challenged, waitedMs: Date.now() - started };
+}
+
+/** Product page: the concrete offer id sits on the add-to-cart button (recorded 2026-09-04). Read-only. */
+export async function readOfferId(page: Page): Promise<string | null> {
+  const fromUrl = /\/oferta\/(?:.*-)?(\d{6,})/.exec(page.url());
+  if (fromUrl) return fromUrl[1];
+  return page.evaluate(() => {
+    const b = document.querySelector('#add-to-cart-button');
+    const v = b ? b.getAttribute('data-analytics-interaction-value') : null;
+    return v && /^\d{6,}$/.test(v) ? v : null;
+  });
 }
 
 export async function readOrderId(page: Page): Promise<string | null> {

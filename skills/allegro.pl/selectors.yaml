@@ -6,18 +6,18 @@
 # After every green run from the maintainer's profile, update last_verified in SKILL.md.
 
 search_input:
-  role: {role: combobox, name: "Czego szukasz?"}
-  css: "TODO-verify"
+  role: {role: combobox, name: "czego szukasz?"}
+  css: "form[data-role='search-form'] input[data-role='search-input']"   # recorded 2026-09-04 (channel A)
   fallback_nl: "search field in the page header"
 
 search_submit:
-  role: {role: button, name: "Szukaj"}
-  css: "TODO-verify"
+  role: {role: button, name: "szukaj"}
+  css: "form[data-role='search-form'] button[data-role='search-button']"   # recorded 2026-09-04 (channel A)
   fallback_nl: "search button next to the input field"
 
 listing_item:
-  role: {role: link}
-  css: "TODO-verify (offer card in the search results: contains price, title, Smart badge)"
+  role: {role: article}
+  css: "article:has(a[href*='/oferta/'], a[href*='/produkt/'], a[href*='/events/clicks'])"   # recorded 2026-09-04; parsed by runtime/src/serp.ts
   fallback_nl: "product card in the results list"
 
 filter_smart:
@@ -26,7 +26,7 @@ filter_smart:
   fallback_nl: "Smart! filter (free delivery) in the left column"
 
 price_on_card:
-  css: "TODO-verify"
+  css: "TODO-verify (text pattern '<price> zł aktualna cena' and '<total> zł z dostawą' inside the card; no stable attribute)"
   fallback_nl: "final price on the product card, including delivery options"
 
 variant_selector:
@@ -35,13 +35,13 @@ variant_selector:
 
 add_to_cart:
   role: {role: button, name: "Dodaj do koszyka"}
-  css: "TODO-verify"
+  css: "#add-to-cart-button"   # product page, recorded 2026-09-04; data-analytics-interaction-value = offer id
   fallback_nl: "add-to-cart button on the product card"
 
 buy_now:
-  role: {role: button, name: "Kup teraz"}
-  css: "TODO-verify"
-  fallback_nl: "immediate purchase button on the product card"
+  role: {role: button, name: "Kup i zapłać"}
+  css: "#buy-and-pay-button_SHOW_ITEM_STATIC_DESKTOP"   # product page "KUP I ZAPŁAĆ", recorded 2026-09-04 (channel A)
+  fallback_nl: "immediate purchase button on the product page (\"Kup i zapłać\")"
 
 cart_go_checkout:
   role: {role: button, name: "Przejdź do dostawy"}

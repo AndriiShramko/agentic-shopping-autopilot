@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pl">
+<head><meta charset="utf-8"><title>Synthetic listing page (test fixture modelled on the 2026-09-04 a11y snapshot; not Allegro markup)</title></head>
+<body>
+  <header>
+    <form data-role="search-form" role="search">
+      <input role="combobox" data-role="search-input" placeholder="czego szukasz?" value="wkręty do drewna 4x40">
+      <button type="submit" data-role="search-button" aria-label="szukaj">SZUKAJ</button>
+    </form>
+    <p>Andrii-Shra… (header, must not leak into cards)</p>
+  </header>
+  <main>
+    <h1>szukasz „wkręty do drewna 4x40” (1 031 ofert)</h1>
+
+    <!-- sponsored card: link goes through /events/clicks with an encoded /oferta/ redirect -->
+    <article>
+      <a href="https://allegro.pl/events/clicks?emission_unit_id=x&amp;type=OFFER&amp;redirect=https%3A%2F%2Fallegro.pl%2Foferta%2Fwkrety-ciesielskie-do-drewna-4x40-stozkowe-torx-500szt-40040-pan-lacznik-18274795456%3Fbi_s%3Dads&amp;placement=productlisting:desktop:query">
+        <img alt="WKRĘTY CIESIELSKIE DO DREWNA 4x40 STOŻKOWE TORX 500szt 40040 Pan Łącznik" src="">
+      </a>
+      <h2><a href="https://allegro.pl/events/clicks?type=OFFER&amp;redirect=https%3A%2F%2Fallegro.pl%2Foferta%2Fwkrety-ciesielskie-do-drewna-4x40-stozkowe-torx-500szt-40040-pan-lacznik-18274795456">WKRĘTY CIESIELSKIE DO DREWNA 4x40 STOŻKOWE TORX 500szt 40040 Pan Łącznik</a></h2>
+      <div><span>5,00</span> <span>(58)</span></div>
+      <button><span>425 osób</span> <span>kupiło ostatnio</span></button>
+      <span>Sponsorowane</span>
+      <div><span>19,</span><span>87 zł</span> aktualna cena</div>
+      <div>30,36 zł z dostawą</div>
+      <img alt="Pan_Lacznik" src="">
+      <span>Firma</span>
+      <span>od Super Sprzedawcy <img alt="Super Sprzedawcy" src=""></span>
+      <button>Allegro Smart! <img alt="Smart!" src=""></button>
+      <span>dostawa w sobotę</span> <span>– kup do 17:30</span>
+      <button data-role-type="add-to-cart-button"><span>dodaj do koszyka</span></button>
+    </article>
+
+    <!-- organic product card (groups offers): /produkt/<slug>-<uuid> -->
+    <article>
+      <a href="https://allegro.pl/produkt/wkrety-do-drewna-4-x-40-mm-10-szt-4ee1a3a1-ad1f-4edb-965a-78b98aa9b079"><img alt="4X40 WKRĘT DO DREWNA DIN 7997 STOŻKOWY NIERDZEWNY A2 10SZT" src=""></a>
+      <span>dostępne warianty</span>
+      <h2><a href="https://allegro.pl/produkt/wkrety-do-drewna-4-x-40-mm-10-szt-4ee1a3a1-ad1f-4edb-965a-78b98aa9b079">4X40 WKRĘT DO DREWNA DIN 7997 STOŻKOWY NIERDZEWNY A2 10SZT</a></h2>
+      <div><span>5,00</span><span>(5)</span></div>
+      <button><span>10 osób</span><span>kupiło ostatnio</span></button>
+      <div>1,00 zł aktualna cena</div>
+      <div>11,49 zł z dostawą</div>
+      <span>Firma</span>
+      <span>od Super Sprzedawcy <img alt="Super Sprzedawcy" src=""></span>
+      <button>Allegro Smart! <img alt="Smart!" src=""></button>
+      <span>dostawa w sobotę – kup do 12:15</span>
+      <button data-role-type="add-to-cart-button"><span>DODAJ DO KOSZYKA</span></button>
+    </article>
+
+    <!-- organic single-offer card without Smart, private seller, free delivery text -->
+    <article>
+      <a href="https://allegro.pl/oferta/wkrety-do-drewna-4x40-100-szt-12345678901"><img alt="Wkręty do drewna 4x40 100 szt" src=""></a>
+      <h2><a href="https://allegro.pl/oferta/wkrety-do-drewna-4x40-100-szt-12345678901">Wkręty do drewna 4x40 100 szt</a></h2>
+      <div>9,99 zł aktualna cena</div>
+      <div>darmowa dostawa</div>
+      <span>Osoba prywatna</span>
+      <button data-role-type="add-to-cart-button"><span>dodaj do koszyka</span></button>
+    </article>
+
+    <!-- duplicate of the product card (must be de-duplicated) -->
+    <article>
+      <h2><a href="https://allegro.pl/produkt/wkrety-do-drewna-4-x-40-mm-10-szt-4ee1a3a1-ad1f-4edb-965a-78b98aa9b079">duplicate</a></h2>
+      <div>1,00 zł aktualna cena</div>
+    </article>
+
+    <!-- not a card: no offer/product link -->
+    <article><h2>Podkategorie</h2><a href="https://allegro.pl/kategoria/gwozdzie-wkrety-sruby-kolki-123">Gwoździe, wkręty</a></article>
+  </main>
+</body>
+</html>

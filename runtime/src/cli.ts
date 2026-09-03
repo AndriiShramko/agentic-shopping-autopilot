@@ -188,7 +188,7 @@ async function main(argv: string[]): Promise<number> {
       if (!offer) throw new Error(`offer ${id} is not in the accepted list of .state/offers.json (mechanical filter)`);
       const sel: SelectedOffer = { id: offer.id, url: offer.url, title: offer.title, total_pln: offer.total_pln, seller: offer.seller, category, rationale };
       writeState('selected.json', sel);
-      audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'offer_selected', flow: 'search', data: { id: sel.id, url: sel.url, title: sel.title, total_pln: sel.total_pln, seller: sel.seller, category, rationale } });
+      audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'offer_selected', flow: 'search', data: { id: sel.id, kind: offer.kind ?? 'offer', url: sel.url, title: sel.title, total_pln: sel.total_pln, seller: sel.seller, smart: offer.smart, super_seller: offer.super_seller, category, rationale } });
       out(`selected ${sel.id} ${sel.total_pln.toFixed(2)} PLN ${sel.title}`);
       return EXIT.OK;
     }

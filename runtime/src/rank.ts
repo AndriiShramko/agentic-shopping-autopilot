@@ -33,6 +33,10 @@ export interface RankResult {
 
 export function totalPln(o: Offer): number | null {
   if (!Number.isFinite(o.price_pln)) return null;
+  // the marketplace's own "z dostawą" figure is the ceiling the mandate is checked against
+  if (typeof o.total_with_delivery_pln === 'number' && Number.isFinite(o.total_with_delivery_pln)) {
+    return round2(Math.max(o.price_pln, o.total_with_delivery_pln));
+  }
   if (o.free_delivery || o.smart) return round2(o.price_pln);
   if (o.shipping_pln === null) return null;
   return round2(o.price_pln + o.shipping_pln);
