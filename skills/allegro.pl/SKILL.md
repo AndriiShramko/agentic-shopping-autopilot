@@ -8,7 +8,7 @@ metadata:
   currencies: [PLN]
   languages: [pl]
   channel:
-    - {type: api, auth: oauth2-device-flow, coverage: [search, bidding], note: "GET /offers/listing requires Allegro application verification; PUT /bidding/.../bid works for auctions"}
+    - {type: api, auth: oauth2-device-flow, coverage: [search, bidding], note: "GET /offers/listing requires Allegro application verification; PUT /bidding/.../bid is documented for auctions but was reported unavailable in 2026-03 (allegro-api issue #13148); verify before relying on it"}
     - {type: browser, engine: chrome-devtools-mcp | playwright, login: required, note: "checkout ONLY via the browser — Allegro has no buyer API"}
   auth: {method: user-session, storage: local-chrome-profile, mfa: sms-possible}
   payment:
@@ -19,11 +19,11 @@ metadata:
   anti_bot:
     level: high
     vendor: DataDome
-    rules: "the user's real Chrome profile, residential IP, human pace, only a few purchases/day; CAPTCHA = stop and escalate, bypasses are forbidden"
+    rules: "the user's real Chrome profile on the user's own machine and home network connection (no proxies), human pace, only a few purchases/day; CAPTCHA = stop and escalate, bypasses are forbidden"
   mandate: required          # before payment — the full PURCHASE_MANDATE checklist
   risk_tier: money
-  last_verified: null        # set by the first green smoke run
-  verified_by: null
+  last_verified: null        # set by the first green smoke run (run manually by the maintainer; no scheduled/CI runs against allegro.pl)
+  verified_by: null          # set to human: Allegro's terms (art. 10.11) permit no automated smoke runs, so a maintainer verifies from their own logged-in profile (docs/site-skill-spec.md §3)
   maintainers: ["@AndriiShramko"]
 ---
 
@@ -45,5 +45,5 @@ metadata:
 - Resolve selectors layer by layer from selectors.yaml: a11y-role → data attribute → NL description. Fix and commit any broken selector (self-healing → PATCH version).
 
 ## Smoke tests and the real-profile requirement
-- `scripts/smoke_search.spec.ts` is read-only and never reaches payment; a green run sets `last_verified`.
+- `scripts/smoke_search.spec.ts` is read-only and never reaches payment. It is run manually by the maintainer from their own logged-in profile — no scheduled or CI runs against allegro.pl (see docs/site-skill-spec.md §3); a green run sets `last_verified` and `verified_by: human`.
 - Field note (2026-09-03): a fresh browser context with no user profile received the DataDome block page ("You have been blocked") on the very first request to allegro.pl. Run the smoke test and every flow from the user's persistent, logged-in Chrome profile (Playwright `launchPersistentContext` or Chrome DevTools MCP attached to the real browser). Do not try to get around the block — that is out of scope by design (see the project's anti-bot policy).

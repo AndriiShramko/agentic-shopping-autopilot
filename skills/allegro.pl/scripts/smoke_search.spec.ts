@@ -1,5 +1,6 @@
 /**
- * Smoke test (read-only, daily): search on allegro.pl is alive, selectors are valid.
+ * Smoke test (read-only; run manually by the maintainer from their own logged-in profile — no scheduled/CI runs
+ * against allegro.pl, see docs/site-skill-spec.md §3): search on allegro.pl is alive, selectors are valid.
  * Run: npx playwright test scripts/smoke_search.spec.ts
  * NEVER reaches payment. Green run => update last_verified in SKILL.md.
  * TODO on first flow recording: replace NL expectations with concrete locators from selectors.yaml.
@@ -14,7 +15,7 @@ test('allegro search returns results', async ({ page }) => {
   // anti-bot block page => skip (run from a real persistent profile), never bypass
   const blocked = page.getByText(/you have been blocked/i);
   test.skip(await blocked.isVisible({ timeout: 3000 }).catch(() => false),
-    'DataDome block page: run this smoke test from the user's persistent logged-in profile');
+    "DataDome block page: run this smoke test from the user's persistent logged-in profile");
   // consent popup, if present
   const consent = page.getByRole('button', { name: /ok, zgadzam się/i });
   if (await consent.isVisible({ timeout: 5000 }).catch(() => false)) await consent.click();

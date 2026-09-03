@@ -6,4 +6,4 @@
 5. `pay_button` ("Kupuję i płacę") — the agent clicks it ITSELF.
 6. If the bank requires 3DS/SMS → push to the user "confirm in your banking app", wait up to 5 min; timeout → report "order is awaiting payment confirmation".
 7. Order confirmation: save the order number, amount, seller → audit log → report to the user (item, price, why it was chosen, remaining limit, link to the order).
-Edge cases: payment declined (card limit/scoring) → 1 retry via Allegro Pay (if allowed) → escalate; payment page changed/unfamiliar → escalate, do not improvise with money.
+Edge cases: payment declined (card limit/scoring) → stop, record in the audit log, escalate to the user; no retry on another rail; payment page changed/unfamiliar → escalate, do not improvise with money.

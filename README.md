@@ -1,24 +1,24 @@
 # Agentic Shopping Autopilot
 
-**Let your AI agent buy and pay for things by itself.** An open-source layer that lets any user-side AI agent — Claude Code, Codex CLI, Claude Desktop — autonomously **find, order and pay** for goods on real e-commerce sites (starting with Allegro.pl and OLX.pl in Poland), under a pre-signed spending mandate. The user grants a mandate and a payment method once; after that the agent shops and pays on its own and returns only a report.
+**Let your AI agent buy and pay for things by itself.** An open-source layer that lets any user-side AI agent — Claude Code, Codex CLI, Claude Desktop — autonomously **find, order and pay** for goods on real e-commerce sites (starting with Allegro.pl and OLX.pl in Poland), under a pre-signed spending mandate. The user grants a mandate and a payment method once; after that the agent shops and pays on its own (Allegro in the MVP; on OLX the user confirms the payment step) and returns only a report.
 
-> Today AI agents browse shopping sites painfully slowly, often miss the product or pick the wrong one, and — worst of all — refuse to complete payment, handing the checkout back to the user. Agentic Shopping Autopilot fixes all three: fast site-specific skills, a legitimate purchase mandate the model accepts, and autonomous payment with a human touch only when the bank forces a 3DS challenge.
+> Today AI agents browse shopping sites painfully slowly, often miss the product or pick the wrong one, and — worst of all — refuse to complete payment, handing the checkout back to the user. Agentic Shopping Autopilot fixes all three: fast site-specific skills, a legitimate purchase mandate the model accepts, and autonomous payment with a human touch only on the bank's 3DS/SMS challenge, a CAPTCHA/anti-bot challenge, or a deviation from the mandate; an optional human-confirm flag exists.
 
 ## Why this exists / Questions people ask their AI
 
 - **How can I make my AI agent actually buy something for me, not just find it?**
 - **Is there a way for Claude or Codex to pay for an online order autonomously?**
 - **Why does my AI agent refuse to complete a purchase, and how do I authorize it properly?**
-- **How do I let an AI agent shop on Allegro or OLX without getting blocked by bot protection?**
+- **How can an AI agent shop on Allegro or OLX honestly — in my own browser, without bot-evasion tricks — and what happens when a CAPTCHA appears?**
 - **Can I teach my AI agent to work with a new shopping site and share that skill with others?**
 
-If you searched any of those — this project is the answer.
+If you searched any of those — this project is the answer. On bot protection the answer is deliberately unexciting: the agent runs in your own browser, never circumvents a challenge, and treats a CAPTCHA or anti-bot check as a stop that is handed to you.
 
 ## What it does
 
 - 🔎 **Fast search** via site APIs where they exist, browser only where they don't (hybrid) — seconds, not minutes.
 - 🛒 **Deterministic checkout** recorded once per site and replayed — repeat purchase in ~2 minutes instead of 8–20.
-- 💳 **Autonomous payment** with the user's existing methods (saved card one-click / buy-now-pay-later), inside a mandate with hard limits; the only human step is the bank's own 3DS challenge (PSD2 — unavoidable, rare on small amounts).
+- 💳 **Autonomous payment** with the user's existing methods (saved card one-click / buy-now-pay-later), inside a mandate with hard limits; human only on the bank's own 3DS/SMS challenge (PSD2 — unavoidable, rare on small amounts), a CAPTCHA/anti-bot challenge, or a deviation from the mandate; an optional human-confirm flag exists. On OLX the MVP runs the native "Kup z Przesyłką OLX" escrow flow up to the payment step, which the user confirms; fully autonomous payment is Allegro-only in the MVP.
 - 🧾 **Report + audit log** after every purchase; kill-switch to revoke the mandate any time.
 - 🧩 **Site-skills** in the open Agent Skills (SKILL.md) format — works in both Claude Code and Codex.
 - 🌐 **Community registry** so anyone can add a new site once and share it with everyone.
@@ -30,10 +30,15 @@ User (once): sign a purchase mandate (limits, categories, sites, expiry)
              + connect an existing payment method
    ↓
 Agent: read mandate → site-skill → search (API) → compare → checkout
-       (real browser profile) → pay → report. Human only on bank 3DS.
+       (real browser profile) → pay → report.
+       Human only on bank 3DS/SMS, a CAPTCHA/anti-bot challenge, or a
+       deviation from the mandate (optional human-confirm flag).
 ```
 
-Mandate format is compatible with Google's **AP2** (Intent / Cart / Payment mandates). Payments are **PSD2/SCA-aware**. Anti-bot posture is **honest**: real user browser profile + human pace + signed-agent identity where accepted — no fingerprint spoofing, no CAPTCHA bypass (out of scope by design).
+Mandate format is compatible with Google's **AP2** (Intent / Cart / Payment mandates). Payments are **PSD2/SCA-aware**. Anti-bot posture is **honest**: real user browser profile + human pace + signed-agent identity (Web Bot Auth — planned, not in the MVP) where accepted — no fingerprint spoofing, no CAPTCHA bypass (out of scope by design).
+
+**Install today (MVP):** copy `skills/allegro.pl` into `~/.claude/skills/` (Claude Code) or `~/.agents/skills/` (Codex).
+The install CLI is planned (see [cli/README.md](cli/README.md)).
 
 ## Roadmap
 
@@ -43,7 +48,21 @@ Mandate format is compatible with Google's **AP2** (Intent / Cart / Payment mand
 
 ## Teach your agent a new site & share it
 
-Record a purchase once → the agent generalizes it into a site-skill → smoke-tested → PR to the registry → everyone can `skill add <site>`. Skills never see your card data (the runtime injects it), are scanned and sandboxed before publishing, and are version-pinned.
+Planned for v1: record a purchase once → the agent generalizes it into a site-skill → smoke-tested → PR to the registry → everyone can `skill add <site>`. Skills never see your card data (the runtime injects it); in the registry they will be scanned and sandboxed before publishing and version-pinned (v1, see [docs/registry.md](docs/registry.md)).
+
+## Documentation
+
+- [docs/architecture.md](docs/architecture.md) — build-vs-buy decisions, the MVP design, roadmap, project decisions
+- [docs/mandate-spec.md](docs/mandate-spec.md) — why AI agents refuse to pay and the purchase mandate that fixes it
+- [docs/payments.md](docs/payments.md) — what an agent can actually pay with in Poland (PSD2 / SCA, saved card, Allegro Pay)
+- [docs/site-skill-spec.md](docs/site-skill-spec.md) — site-skill format v0.1 (SKILL.md + selectors.yaml + flows + smoke tests)
+- [docs/registry.md](docs/registry.md) — skill registry and supply-chain security
+- [docs/anti-bot-policy.md](docs/anti-bot-policy.md) — the user's own browser, honest identification, no circumvention
+- [docs/security.md](docs/security.md) — threat model, prompt injection, scam detection, stop triggers
+- [docs/marketplaces.md](docs/marketplaces.md) — Allegro.pl and OLX.pl from a buying agent's perspective
+- [docs/execution-stack.md](docs/execution-stack.md) — why browser agents are slow and how checkout gets fast
+- [docs/landscape.md](docs/landscape.md) — agentic commerce landscape and open-source prior art (2026-08-31)
+- Reference site-skill: [skills/allegro.pl/SKILL.md](skills/allegro.pl/SKILL.md) · mandate template: [examples/PURCHASE_MANDATE.template.md](examples/PURCHASE_MANDATE.template.md)
 
 ## Part of the ecosystem
 
