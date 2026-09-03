@@ -64,6 +64,10 @@ saved payment method in the bank app).
 
 The agent itself presses the pay button on Allegro inside the mandate; on OLX the MVP expects the user's own confirmation at the payment step of the native escrow flow (project decision 2, iv). A "human confirms payment" mode exists only as an optional configuration flag, not as the default.
 
+## Implementation status (2026-09-04)
+
+The MVP runtime is implemented in [`../runtime/`](../runtime/README.md) as a step-wise CLI (`asa`) in Node 20 + TypeScript + Playwright. Two deliberate deviations from the build-vs-buy matrix above, both project decisions of 2026-09-03: (1) the browser execution layer is Playwright attached over the Chrome DevTools Protocol to a dedicated, headed Chrome profile on the user's machine (plus the Claude in Chrome extension in the user's own Chrome for flow recording and branch decisions) — Stagehand, browser-use and any separate LLM API key are not used, because the operator session (Claude Code or Codex) is already the LLM at branch points and the selector cache with self-healing is a few hundred lines of the project's own code; (2) the Allegro search channel is implemented from the public endpoint schema (`GET /offers/listing`, OAuth2 device flow) rather than by installing `allegro-open-mcp-server`. Everything else — the mandate format and SHA-256 pinning, the append-only redacted audit log, the domain allowlist with the 3DS hand-off, the saved-method-only payment rails, the stop triggers — is implemented as described on this page. Field observation recorded on 2026-09-04 from the maintainer's own logged-in profile: Allegro listing pages now group offers into product cards (`/produkt/<uuid>`) that show the price with the cheapest delivery ("z dostawą"); the runtime uses that figure as the mandate ceiling and reads the concrete offer id from the product page.
+
 ## Not in the MVP
 
 - Anti-detect browsers, proxies, CAPTCHA bypass — out of scope permanently (see [anti-bot-policy.md](anti-bot-policy.md))

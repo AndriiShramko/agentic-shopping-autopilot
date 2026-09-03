@@ -106,7 +106,9 @@ export function extractCardsInPage(): RawCard[] {
     const imgAlts = Array.from(art.querySelectorAll('img')).map((i) => (i.getAttribute('alt') || '').trim());
     const smart = imgAlts.some((a) => /^smart!?$/i.test(a)) || /allegro smart!/i.test(text);
     const superSeller = /super sprzedaw/i.test(text) || imgAlts.some((a) => /super sprzedaw/i.test(a));
-    const sellerType: RawCard['seller_type'] = /\bfirma\b/i.test(text) ? 'firma' : /osoba prywatna/i.test(text) ? 'osoba' : 'unknown';
+    // "Firma" / "Osoba prywatna" can be visually hidden (a11y-only), so look at textContent as well
+    const tc = (art.textContent || '').replace(/\s+/g, ' ');
+    const sellerType: RawCard['seller_type'] = /\bfirma\b/i.test(tc) ? 'firma' : /osoba prywatna/i.test(tc) ? 'osoba' : 'unknown';
     const sellerAlt = imgAlts.find((a) => a && a !== title && !/^smart!?$/i.test(a) && !/super sprzedaw|informacja/i.test(a) && !title.startsWith(a.slice(0, 20)));
     const boughtM = /(\d+)\s*os[oó]b[ay]?\s*kupi/i.exec(text);
     const promiseM = /dostawa (?:w |do )?[^–\-]{2,25}/i.exec(text);

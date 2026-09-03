@@ -37,7 +37,7 @@ Agent: read mandate → site-skill → search (API) → compare → checkout
 
 Mandate format is compatible with Google's **AP2** (Intent / Cart / Payment mandates). Payments are **PSD2/SCA-aware**. Anti-bot posture is **honest**: real user browser profile + human pace + signed-agent identity (Web Bot Auth — planned, not in the MVP) where accepted — no fingerprint spoofing, no CAPTCHA bypass (out of scope by design).
 
-**Install today (MVP):** copy `skills/allegro.pl` into `~/.claude/skills/` (Claude Code) or `~/.agents/skills/` (Codex).
+**Install today (MVP):** copy `skills/allegro.pl` into `~/.claude/skills/` (Claude Code) or `~/.agents/skills/` (Codex), and run the deterministic runtime from [`runtime/`](runtime/README.md) (Node 20 + TypeScript + Playwright): `asa mandate:check`, `asa search`, `asa select`, `asa checkout --step N`, `asa report`. The runtime enforces the mandate, the domain allowlist, the audit log and the pay click; the operator session (Claude Code or Codex) decides only at branch points. No LLM API keys and no third-party browser-agent framework are needed.
 The install CLI is planned (see [cli/README.md](cli/README.md)).
 
 ## Roadmap
