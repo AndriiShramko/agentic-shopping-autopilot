@@ -1,6 +1,6 @@
-# Флоу: корзина
-1. `add_to_cart` (или `buy_now` для единичной покупки — тогда сразу checkout).
-2. Проверить содержимое корзины: ровно тот товар, то количество, та цена. Любой «автодобавленный» товар/услуга (защита покупки, доп. гарантия) → удалить.
+# Flow: cart
+1. `add_to_cart` (or `buy_now` for a single-item purchase — then go straight to checkout).
+2. Check the cart contents: exactly that item, that quantity, that price. Any "auto-added" item/service (purchase protection, additional warranty) → remove.
 3. `cart_go_checkout`.
-Инвариант: сумма корзины ≤ лимита покупки мандата И (сумма + уже потрачено) ≤ совокупного лимита.
-Edge cases: попап «добавь ещё для бесплатной доставки» — игнорировать, если не выгодно по итоговой цене; мультипродавцовая корзина — разбить на отдельные заказы.
+Invariant: cart total ≤ the mandate's per-purchase limit AND (total + already spent) ≤ the cumulative limit.
+Edge cases: the "add more for free shipping" popup — ignore unless it is beneficial by final price; a multi-seller cart — split into separate orders.

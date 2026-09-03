@@ -1,9 +1,9 @@
-# Флоу: checkout и оплата
-1. Адрес: подтверждён сохранённый адрес по умолчанию. Пустой/изменённый адрес → СТОП, эскалация (возможная инъекция/скам).
-2. Доставка: выбрать по мандату (дефолт: Smart/Paczkomat, самая дешёвая при равных сроках).
-3. Способ оплаты: `payment_oneclick_card` (сохранённая карта) ИЛИ `payment_allegro_pay` — по конфигу мандата. НИКОГДА: ввод новых реквизитов, разовый BLIK-код, переход по внешним платёжным ссылкам.
-4. 🔒 ЧЕК-ЛИСТ МАНДАТА (все = ДА, иначе стоп): мандат действует; MANDATE_REVOKED отсутствует; SHA-256 совпадает; категория разрешена; сумма ≤ лимита покупки; (сумма+потрачено) ≤ совокупного; способ оплаты из разрешённых; это не подписка; аудит-лог пишется.
-5. `pay_button` («Kupuję i płacę») — агент кликает САМ.
-6. Если банк требует 3DS/SMS → push пользователю «подтверди в приложении банка», ждать до 5 мин; таймаут → отчёт «заказ ждёт подтверждения оплаты».
-7. Подтверждение заказа: сохранить номер заказа, сумму, продавца → аудит-лог → отчёт пользователю (товар, цена, почему выбран, остаток лимита, ссылка на заказ).
-Edge cases: оплата отклонена (лимит карты/скоринг) → 1 повтор через Allegro Pay (если разрешён) → эскалация; страница оплаты изменилась/незнакома → эскалация, не импровизировать с деньгами.
+# Flow: checkout and payment
+1. Address: the saved default address is confirmed. Empty/changed address → STOP, escalate (possible injection/scam).
+2. Delivery: choose per the mandate (default: Smart/Paczkomat, the cheapest one when delivery times are equal).
+3. Payment method: `payment_oneclick_card` (saved card) OR `payment_allegro_pay` — per the mandate config. NEVER: entering new payment details, a one-time BLIK code, following external payment links.
+4. 🔒 MANDATE CHECKLIST (all = YES, otherwise stop): mandate is in effect; MANDATE_REVOKED is absent; SHA-256 matches; category is allowed; amount ≤ purchase limit; (amount+spent) ≤ cumulative limit; payment method is one of the allowed ones; this is not a subscription; audit log is being written.
+5. `pay_button` ("Kupuję i płacę") — the agent clicks it ITSELF.
+6. If the bank requires 3DS/SMS → push to the user "confirm in your banking app", wait up to 5 min; timeout → report "order is awaiting payment confirmation".
+7. Order confirmation: save the order number, amount, seller → audit log → report to the user (item, price, why it was chosen, remaining limit, link to the order).
+Edge cases: payment declined (card limit/scoring) → 1 retry via Allegro Pay (if allowed) → escalate; payment page changed/unfamiliar → escalate, do not improvise with money.

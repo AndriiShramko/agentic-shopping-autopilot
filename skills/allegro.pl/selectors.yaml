@@ -1,73 +1,73 @@
-# Карта селекторов allegro.pl — слоёная деградация: role → css → NL-fallback.
-# ⚠️ Все css-значения — TODO: заполнить при первой записи флоу (playwright codegen)
-# на живом сайте; role/NL рабочие как fallback уже сейчас.
-# После каждого зелёного smoke-прогона обновлять last_verified в SKILL.md.
+# allegro.pl selector map — layered degradation: role → css → NL fallback.
+# ⚠️ All css values are TODO: fill them in during the first flow recording (playwright codegen)
+# on the live site; role/NL already work as a fallback today.
+# After every green smoke run, update last_verified in SKILL.md.
 
 search_input:
   role: {role: combobox, name: "Czego szukasz?"}
   css: "TODO-verify"
-  fallback_nl: "поле поиска в шапке страницы"
+  fallback_nl: "search field in the page header"
 
 search_submit:
   role: {role: button, name: "Szukaj"}
   css: "TODO-verify"
-  fallback_nl: "кнопка поиска рядом с полем ввода"
+  fallback_nl: "search button next to the input field"
 
 listing_item:
   role: {role: link}
-  css: "TODO-verify (карточка оффера в выдаче: содержит цену, название, бейдж Smart)"
-  fallback_nl: "карточка товара в списке результатов"
+  css: "TODO-verify (offer card in the search results: contains price, title, Smart badge)"
+  fallback_nl: "product card in the results list"
 
 filter_smart:
   role: {role: checkbox, name: "Smart!"}
   css: "TODO-verify"
-  fallback_nl: "фильтр Smart! (бесплатная доставка) в левой колонке"
+  fallback_nl: "Smart! filter (free delivery) in the left column"
 
 price_on_card:
   css: "TODO-verify"
-  fallback_nl: "итоговая цена на карточке товара, включая варианты доставки"
+  fallback_nl: "final price on the product card, including delivery options"
 
 variant_selector:
   css: "TODO-verify"
-  fallback_nl: "выбор обязательной вариации (размер/цвет) на карточке товара"
+  fallback_nl: "selection of a mandatory variant (size/color) on the product card"
 
 add_to_cart:
   role: {role: button, name: "Dodaj do koszyka"}
   css: "TODO-verify"
-  fallback_nl: "кнопка добавления в корзину на карточке товара"
+  fallback_nl: "add-to-cart button on the product card"
 
 buy_now:
   role: {role: button, name: "Kup teraz"}
   css: "TODO-verify"
-  fallback_nl: "кнопка немедленной покупки на карточке товара"
+  fallback_nl: "immediate purchase button on the product card"
 
 cart_go_checkout:
   role: {role: button, name: "Przejdź do dostawy"}
   css: "TODO-verify"
-  fallback_nl: "кнопка перехода из корзины к доставке"
+  fallback_nl: "button to go from the cart to delivery"
 
 delivery_option:
   css: "TODO-verify"
-  fallback_nl: "выбор способа доставки (предпочитать Smart/Paczkomat из мандата)"
+  fallback_nl: "delivery method selection (prefer Smart/Paczkomat from the mandate)"
 
 payment_oneclick_card:
   css: "TODO-verify"
-  fallback_nl: "сохранённая карта (płatność jednym kliknięciem) в списке способов оплаты"
+  fallback_nl: "saved card (płatność jednym kliknięciem) in the list of payment methods"
 
 payment_allegro_pay:
   css: "TODO-verify"
-  fallback_nl: "Allegro Pay в списке способов оплаты"
+  fallback_nl: "Allegro Pay in the list of payment methods"
 
 pay_button:
   role: {role: button, name: "Kupuję i płacę"}
   css: "TODO-verify"
-  fallback_nl: "финальная кнопка оплаты; ПЕРЕД кликом — полный чек-лист мандата"
+  fallback_nl: "final payment button; BEFORE clicking — full mandate checklist"
 
 order_status:
-  fallback_nl: "статус заказа в Moje zakupy (API истории покупок у Allegro нет — только UI/email)"
+  fallback_nl: "order status in Moje zakupy (Allegro has no purchase history API — UI/email only)"
 
 endpoints:
-  # API-канал (быстрый путь для поиска; см. piotrlinski/allegro-open-mcp-server)
-  search: "GET https://api.allegro.pl/offers/listing  # scope после верификации приложения; иначе SERP"
-  bid: "PUT https://api.allegro.pl/bidding/offers/{offerId}/bid  # аукционы, scope allegro:api:bids"
+  # API channel (fast path for search; see piotrlinski/allegro-open-mcp-server)
+  search: "GET https://api.allegro.pl/offers/listing  # scope after app verification; otherwise SERP"
+  bid: "PUT https://api.allegro.pl/bidding/offers/{offerId}/bid  # auctions, scope allegro:api:bids"
   oauth: "device flow: https://allegro.pl/auth/oauth/device"

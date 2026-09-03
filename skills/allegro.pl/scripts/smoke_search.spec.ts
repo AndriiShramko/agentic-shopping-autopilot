@@ -1,14 +1,21 @@
 /**
- * Smoke-тест (read-only, ежедневный): поиск на allegro.pl жив, селекторы валидны.
- * Запуск: npx playwright test scripts/smoke_search.spec.ts
- * НИКОГДА не доходит до оплаты. Зелёный прогон => обновить last_verified в SKILL.md.
- * TODO при первой записи флоу: заменить NL-ожидания на конкретные локаторы из selectors.yaml.
+ * Smoke test (read-only, daily): search on allegro.pl is alive, selectors are valid.
+ * Run: npx playwright test scripts/smoke_search.spec.ts
+ * NEVER reaches payment. Green run => update last_verified in SKILL.md.
+ * TODO on first flow recording: replace NL expectations with concrete locators from selectors.yaml.
+ * Run it from the user's persistent, logged-in browser profile: a fresh context with no profile
+ * gets the DataDome block page on the first request (observed 2026-09-03). The test then skips
+ * instead of failing — a block is a signal to stop, never something to work around.
  */
 import { test, expect } from '@playwright/test';
 
 test('allegro search returns results', async ({ page }) => {
   await page.goto('https://allegro.pl');
-  // consent-попап, если есть
+  // anti-bot block page => skip (run from a real persistent profile), never bypass
+  const blocked = page.getByText(/you have been blocked/i);
+  test.skip(await blocked.isVisible({ timeout: 3000 }).catch(() => false),
+    'DataDome block page: run this smoke test from the user's persistent logged-in profile');
+  // consent popup, if present
   const consent = page.getByRole('button', { name: /ok, zgadzam się/i });
   if (await consent.isVisible({ timeout: 5000 }).catch(() => false)) await consent.click();
 
@@ -17,7 +24,7 @@ test('allegro search returns results', async ({ page }) => {
   await search.fill('wkręty do drewna');
   await search.press('Enter');
 
-  // выдача содержит карточки с ценами
+  // results contain cards with prices
   await expect(page.locator('article').first()).toBeVisible({ timeout: 15000 });
   const priceCount = await page.getByText(/zł/).count();
   expect(priceCount).toBeGreaterThan(3);

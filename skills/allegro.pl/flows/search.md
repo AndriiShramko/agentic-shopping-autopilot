@@ -1,8 +1,8 @@
-# Флоу: поиск
-Предусловия: валидный мандат прочитан; критерии (запрос, бюджет, категория) известны.
-1. КАНАЛ A (приоритет): API `GET /offers/listing` (query, category, price range, sort) → JSON офферов. Если 403 (нет верификации) → канал B.
-2. КАНАЛ B: браузер → `search_input` → запрос → `search_submit` → при необходимости `filter_smart`, фильтр цены по мандату.
-3. Нормализация каждого оффера: {id, название, цена, стоимость доставки, Smart?, рейтинг продавца, кол-во продаж, url}.
-4. Ранжирование: (цена+доставка) ↑, рейтинг продавца ≥98%, Smart предпочтителен.
-Постусловие-инвариант: ≥1 оффер в рамках лимита мандата; иначе — отчёт «не найдено в бюджете», без покупки.
-Edge cases: 0 результатов → расширить запрос синонимами (1 попытка) → отчёт; консент-попап cookies → принять и продолжить.
+# Flow: search
+Preconditions: a valid mandate has been read; the criteria (query, budget, category) are known.
+1. CHANNEL A (priority): API `GET /offers/listing` (query, category, price range, sort) → JSON of offers. If 403 (no verification) → channel B.
+2. CHANNEL B: browser → `search_input` → query → `search_submit` → if needed `filter_smart`, price filter per the mandate.
+3. Normalization of each offer: {id, title, price, shipping cost, Smart?, seller rating, number of sales, url}.
+4. Ranking: (price+shipping) ↑, seller rating ≥98%, Smart preferred.
+Postcondition invariant: ≥1 offer within the mandate limit; otherwise — report "not found within budget", no purchase.
+Edge cases: 0 results → broaden the query with synonyms (1 attempt) → report; cookie consent popup → accept and continue.

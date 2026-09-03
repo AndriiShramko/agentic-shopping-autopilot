@@ -1,5 +1,5 @@
-# Флоу: трекинг
-1. API истории покупок у Allegro нет → источники: страница «Moje zakupy» в сессии + email-уведомления (если подключён доступ к почте).
-2. Проверять статус: раз в день до «доставлено»; номер отправления и Paczkomat — в отчёт пользователю.
-3. «Доставлено» → финальная запись в аудит-лог, закрытие позиции в отчёте.
-Edge cases: продавец не отправил за 3 дня → уведомить пользователя (открытие спора — только человек); запрос отзыва — пропустить (не дело агента).
+# Flow: tracking
+1. Allegro has no purchase-history API → sources: the "Moje zakupy" page in the session + email notifications (if mailbox access is connected).
+2. Check the status: once a day until "delivered"; the shipment number and the Paczkomat go into the report to the user.
+3. "Delivered" → final entry in the audit log, close the item in the report.
+Edge cases: the seller has not shipped within 3 days → notify the user (opening a dispute is for a human only); a review request → skip (not the agent's job).
