@@ -19,6 +19,9 @@ export const AUDIT_EVENTS = [
   'challenge_3ds',
   'order_confirmed',
   'stop',
+  'mandate_amended',
+  'mandate_signed',
+  'limit_override',
 ] as const;
 export type AuditEventName = (typeof AUDIT_EVENTS)[number];
 

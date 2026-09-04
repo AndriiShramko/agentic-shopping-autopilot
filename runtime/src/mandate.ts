@@ -36,6 +36,9 @@ export interface MandateHeader {
 }
 
 export interface MandateLimits {
+  /** Optional: ceiling for a single item (line) inside an order. */
+  perItemPln?: number;
+  /** Ceiling for one purchase (order total incl. delivery). */
   perPurchasePln: number;
   aggregatePln: number;
   validFrom: string;
@@ -78,8 +81,12 @@ export function computeMandateHash(raw: string): MandateHash | { error: string }
 }
 
 const NUM = '(\\d+(?:[.,]\\d{1,2})?)';
+const RE_PER_ITEM = new RegExp(
+  '^-\\s*(?:Лимит одной позиции|Single-item limit)\\s*:\\s*[≤<=]+\\s*' + NUM + '\\s*PLN\\s*(?:\\(.*\\))?\\s*$',
+  'u',
+);
 const RE_PER_PURCHASE = new RegExp(
-  '^-\\s*(?:Лимит одной покупки|Single-purchase limit)\\s*:\\s*[≤<=]+\\s*' + NUM + '\\s*PLN\\s*(?:\\(.*\\))?\\s*$',
+  '^-\\s*(?:Лимит одной покупки(?: \\(заказа\\))?|Single-purchase limit|Single-order limit)\\s*:\\s*[≤<=]+\\s*' + NUM + '\\s*PLN\\s*(?:\\(.*\\))?\\s*$',
   'u',
 );
 const RE_AGGREGATE = new RegExp(
@@ -121,7 +128,8 @@ export function parseMandate(raw: string): ParsedMandate {
   const sec2 = idx2 >= 0 ? lines.slice(idx2 + 1, idx3 > idx2 ? idx3 : lines.length) : [];
   for (const l of sec2) {
     let m: RegExpExecArray | null;
-    if ((m = RE_PER_PURCHASE.exec(l))) limits.perPurchasePln = toNumber(m[1]);
+    if ((m = RE_PER_ITEM.exec(l))) limits.perItemPln = toNumber(m[1]);
+    else if ((m = RE_PER_PURCHASE.exec(l))) limits.perPurchasePln = toNumber(m[1]);
     else if ((m = RE_AGGREGATE.exec(l))) limits.aggregatePln = toNumber(m[1]);
     else if ((m = RE_VALIDITY.exec(l))) {
       limits.validFrom = m[1];
@@ -176,6 +184,14 @@ export interface CheckInput {
   now?: Date;
   /** Total amount of the purchase (item + delivery) in PLN. */
   amountPln?: number;
+  /** Price of the most expensive single item in the order, when the mandate has a per-item limit. */
+  itemPln?: number;
+  /**
+   * One-time over-limit approval given by the principal in chat for THIS purchase (owner decision
+   * 2026-09-04): amounts up to this value pass the item / purchase / aggregate checks, and the fact is
+   * reported in the check output and the audit log.
+   */
+  overridePln?: number;
   category?: string;
   domain?: string;
   /** Sum of order_confirmed amounts for this mandate so far (from the audit log). */
@@ -270,19 +286,28 @@ export function checkMandate(input: CheckInput): CheckResult {
   if (parsed.limits.aggregatePln !== undefined) {
     remainingPln = round2(parsed.limits.aggregatePln - (input.spentPln ?? 0));
   }
+  const override = input.overridePln !== undefined && input.overridePln > 0 ? input.overridePln : undefined;
+  const covered = (value: number): boolean => override !== undefined && value <= override + 0.001;
+  const viaOverride = (value: number): string => (covered(value) ? ` (allowed by one-time approval up to ${override?.toFixed(2)} PLN)` : '');
+  if (input.itemPln !== undefined && parsed.limits.perItemPln !== undefined) {
+    const lim = parsed.limits.perItemPln;
+    const ok = input.itemPln <= lim || covered(input.itemPln);
+    push('item', ok, `item ${input.itemPln.toFixed(2)} PLN ${input.itemPln <= lim ? '<=' : '>'} per-item limit ${lim}${viaOverride(input.itemPln)}`);
+  }
   if (input.amountPln !== undefined) {
     const per = parsed.limits.perPurchasePln;
     if (per !== undefined) {
-      const ok = input.amountPln <= per;
-      push('amount', ok, `amount ${input.amountPln.toFixed(2)} PLN ${ok ? '<=' : '>'} per-purchase limit ${per}`);
+      const ok = input.amountPln <= per || covered(input.amountPln);
+      push('amount', ok, `amount ${input.amountPln.toFixed(2)} PLN ${input.amountPln <= per ? '<=' : '>'} per-purchase limit ${per}${viaOverride(input.amountPln)}`);
     }
     if (parsed.limits.aggregatePln !== undefined) {
       const spent = input.spentPln ?? 0;
-      const ok = round2(input.amountPln + spent) <= parsed.limits.aggregatePln;
+      const within = round2(input.amountPln + spent) <= parsed.limits.aggregatePln;
+      const ok = within || covered(input.amountPln);
       push(
         'aggregate',
         ok,
-        `amount ${input.amountPln.toFixed(2)} + spent ${spent.toFixed(2)} ${ok ? '<=' : '>'} aggregate limit ${parsed.limits.aggregatePln}`,
+        `amount ${input.amountPln.toFixed(2)} + spent ${spent.toFixed(2)} ${within ? '<=' : '>'} aggregate limit ${parsed.limits.aggregatePln}${within ? '' : viaOverride(input.amountPln)}`,
       );
     }
   }
@@ -308,7 +333,7 @@ export function checkMandate(input: CheckInput): CheckResult {
 
 function describeLimits(l: Partial<MandateLimits>): string {
   return (
-    `per-purchase <= ${l.perPurchasePln} PLN; aggregate <= ${l.aggregatePln} PLN; ` +
+    `${l.perItemPln !== undefined ? `per-item <= ${l.perItemPln} PLN; ` : ''}per-purchase <= ${l.perPurchasePln} PLN; aggregate <= ${l.aggregatePln} PLN; ` +
     `${l.validFrom}..${l.validTo}; categories [${(l.categories ?? []).join('; ')}]; ` +
     `marketplaces [${(l.marketplaces ?? []).join(', ')}]`
   );

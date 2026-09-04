@@ -18,7 +18,7 @@ import type { RuntimeConfig } from './config.js';
 import { checkMandate, formatCheck } from './mandate.js';
 import { parsePln } from './offers.js';
 import { resolveSelector, type SelectorMap } from './selectors.js';
-import { EXIT, writeAriaSnapshot, writeState, writeStepResult, stripQuery, type StepStatus } from './state.js';
+import { EXIT, readState, writeAriaSnapshot, writeState, writeStepResult, stripQuery, type StepStatus } from './state.js';
 import { StopError, type RunContext } from './stop.js';
 
 export const FLOW = 'checkout';
@@ -30,6 +30,8 @@ export interface SelectedOffer {
   title: string;
   /** Ceiling agreed at selection time (price + delivery as shown on the listing). */
   total_pln: number;
+  /** Item price without delivery (checked against the per-item limit when the mandate has one). */
+  price_pln?: number;
   seller: string;
   category: string;
   rationale?: string;
@@ -132,8 +134,10 @@ async function recipientMatches(env: CheckoutEnv): Promise<{ ok: boolean; missin
 
 function gate(env: CheckoutEnv, amount: number): { ok: boolean; text: string } {
   const spent = env.audit.spentPln(env.ctx.mandate_id);
-  const res = checkMandate({ config: env.cfg, amountPln: amount, category: env.selected.category, domain: 'allegro.pl', spentPln: spent });
-  env.audit.append({ ...env.ctx, event: 'mandate_checked', flow: FLOW, step: 8, data: { ok: res.ok, amount_pln: amount, spent_pln: spent, remaining_pln: res.remainingPln, failed: res.items.filter((i) => !i.ok).map((i) => i.id) } });
+  const override = readState<{ run_id: string; amount_pln: number; approved_by: string }>('override.json');
+  const overridePln = override && override.run_id === env.ctx.run_id ? override.amount_pln : undefined;
+  const res = checkMandate({ config: env.cfg, amountPln: amount, itemPln: env.selected.price_pln, overridePln, category: env.selected.category, domain: 'allegro.pl', spentPln: spent });
+  env.audit.append({ ...env.ctx, event: 'mandate_checked', flow: FLOW, step: 8, data: { ok: res.ok, amount_pln: amount, item_pln: env.selected.price_pln, spent_pln: spent, remaining_pln: res.remainingPln, override_pln: overridePln, override_by: overridePln !== undefined ? override?.approved_by : undefined, failed: res.items.filter((i) => !i.ok).map((i) => i.id) } });
   return { ok: res.ok, text: formatCheck(res) };
 }
 

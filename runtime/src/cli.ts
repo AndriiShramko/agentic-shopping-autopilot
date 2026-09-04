@@ -20,6 +20,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { amendMandateLimits, signMandate, type OverrideRecord } from './amend.js';
 import { AuditLog, newRunId } from './audit.js';
 import { ApiConfigError, ApiNotVerifiedError, getToken, searchListing } from './api.js';
 import { connectChannelB, detectBlock, detectLoggedIn } from './browser.js';
@@ -99,17 +100,66 @@ async function main(argv: string[]): Promise<number> {
       const draft = args.draft === true;
       const run = readState<RunState>('run.json');
       const spent = run ? audit.spentPln(run.mandate_id) : undefined;
+      const override = readState<OverrideRecord>('override.json');
+      const overridePln = override && run && override.run_id === run.run_id ? override.amount_pln : undefined;
       const res = checkMandate({
         config: cfg,
         amountPln: num(args, 'amount'),
+        itemPln: num(args, 'item'),
+        overridePln,
         category: str(args, 'category'),
         domain: str(args, 'domain'),
         spentPln: spent,
         requireSigned: !draft,
       });
       out(formatCheck(res));
-      if (run) audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'mandate_checked', data: { ok: res.ok, amount_pln: num(args, 'amount'), spent_pln: spent, remaining_pln: res.remainingPln, failed: res.items.filter((i) => !i.ok).map((i) => i.id), draft } });
+      if (run) audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'mandate_checked', data: { ok: res.ok, amount_pln: num(args, 'amount'), item_pln: num(args, 'item'), spent_pln: spent, remaining_pln: res.remainingPln, override_pln: overridePln, failed: res.items.filter((i) => !i.ok).map((i) => i.id), draft } });
       return res.ok ? EXIT.OK : EXIT.STOP;
+    }
+
+    case 'mandate:amend': {
+      // Quick limit change (owner decision 2026-09-04). The hash changes -> status: draft until `mandate:sign`.
+      const cats = str(args, 'categories');
+      const r = amendMandateLimits(cfg.mandatePath, {
+        perItemPln: num(args, 'per-item'),
+        perPurchasePln: num(args, 'per-order'),
+        aggregatePln: num(args, 'total'),
+        validFrom: str(args, 'from'),
+        validTo: str(args, 'to'),
+        categories: cats ? cats.split(';').map((c) => c.trim()).filter(Boolean) : undefined,
+      });
+      for (const c of r.changed) out(`  ${c}`);
+      out(`mandate amended (${r.changed.length} line(s)); status is now draft`);
+      out(`new hash: ${r.hash.hash} (lines ${r.hash.fromLine}-${r.hash.toLine}) — confirm it in chat, then run: asa mandate:sign --by "<name> (chat)" --hash ${r.hash.hash}`);
+      const run = readState<RunState>('run.json');
+      if (run) audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'mandate_amended', data: { changed: r.changed, hash: r.hash.hash } });
+      return EXIT.OK;
+    }
+
+    case 'mandate:sign': {
+      const by = str(args, 'by');
+      if (!by) throw new Error('--by "<principal name> (chat)" is required; the confirmation in chat is the signing act');
+      const when = str(args, 'when') ?? `${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+      const h = signMandate(cfg.mandatePath, { signer: by, when, expectedHash: str(args, 'hash'), configPath: cfg.configPath });
+      out(`mandate signed by ${by} at ${when}; SHA-256 ${h.hash} written to section 7 and MANDATE_SHA256`);
+      const res = checkMandate({ config: loadConfig({ argv }) });
+      out(formatCheck(res));
+      const run = readState<RunState>('run.json');
+      if (run) audit.append({ run_id: run.run_id, mandate_id: res.mandateId ?? run.mandate_id, event: 'mandate_signed', data: { by, when, hash: h.hash, green: res.ok } });
+      return res.ok ? EXIT.OK : EXIT.STOP;
+    }
+
+    case 'override': {
+      // One-time over-limit approval for the CURRENT run only (owner decision 2026-09-04).
+      const amount = num(args, 'amount');
+      const by = str(args, 'by');
+      if (!amount || !by) throw new Error('usage: asa override --amount N --by "<principal name> (chat)" [--note "..."]');
+      const run = currentRun(cfg);
+      const rec: OverrideRecord = { run_id: run.run_id, amount_pln: amount, approved_by: by, ts: new Date().toISOString(), note: str(args, 'note') };
+      writeState('override.json', rec);
+      audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'limit_override', data: { amount_pln: amount, approved_by: by, note: rec.note } });
+      out(`one-time approval recorded for run ${run.run_id}: up to ${amount.toFixed(2)} PLN (by ${by})`);
+      return EXIT.OK;
     }
 
     case 'run:start': {
@@ -118,7 +168,7 @@ async function main(argv: string[]): Promise<number> {
       const res = checkMandate({ config: cfg, requireSigned: false });
       const run: RunState = { run_id: newRunId(), mandate_id: res.mandateId ?? 'unknown', started: new Date().toISOString(), mode, command };
       writeState('run.json', run);
-      for (const f of ['offers.json', 'selected.json', 'step-result.json']) {
+      for (const f of ['offers.json', 'selected.json', 'step-result.json', 'override.json']) {
         const p = path.join(path.dirname(statePath('run.json')), f);
         if (fs.existsSync(p)) fs.unlinkSync(p);
       }
@@ -186,7 +236,7 @@ async function main(argv: string[]): Promise<number> {
       const state = readState<{ accepted: (Offer & { total_pln: number })[] }>('offers.json');
       const offer = state?.accepted.find((o) => o.id === id);
       if (!offer) throw new Error(`offer ${id} is not in the accepted list of .state/offers.json (mechanical filter)`);
-      const sel: SelectedOffer = { id: offer.id, url: offer.url, title: offer.title, total_pln: offer.total_pln, seller: offer.seller, category, rationale };
+      const sel: SelectedOffer = { id: offer.id, url: offer.url, title: offer.title, total_pln: offer.total_pln, price_pln: offer.price_pln, seller: offer.seller, category, rationale };
       writeState('selected.json', sel);
       audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'offer_selected', flow: 'search', data: { id: sel.id, kind: offer.kind ?? 'offer', url: sel.url, title: sel.title, total_pln: sel.total_pln, seller: sel.seller, smart: offer.smart, super_seller: offer.super_seller, category, rationale } });
       out(`selected ${sel.id} ${sel.total_pln.toFixed(2)} PLN ${sel.title}`);
@@ -312,7 +362,7 @@ async function main(argv: string[]): Promise<number> {
     }
 
     default:
-      out('usage: asa <mandate:check|run:start|search|select|checkout|ref:capture|browser:check|audit:append|audit:redact|report|metrics|selectors:set|selectors:domain> [options]');
+      out('usage: asa <mandate:check|mandate:amend|mandate:sign|override|run:start|search|select|checkout|ref:capture|browser:check|audit:append|audit:redact|report|metrics|selectors:set|selectors:domain> [options]');
       return cmd ? EXIT.ERROR : EXIT.OK;
   }
 }
