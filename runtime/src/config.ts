@@ -22,8 +22,29 @@ export const CONFIG_KEYS = [
   'REF_FULL_NAME',
   'REF_DELIVERY_ADDRESS',
   'REF_PICKUP_POINT',
+  // Smart! basket (2026-09-04): free delivery threshold per seller, complement window, profile location
+  'SMART_THRESHOLD_PLN',
+  'SMART_SLACK_PLN',
+  'MAX_COMPLEMENTS',
+  'REORDER_COOLDOWN_DAYS',
+  'SHOPPING_PROFILE_DIR',
+  'DEFAULT_RAIL',
+  'ALLEGRO_LOGIN',
 ] as const;
 export type ConfigKey = (typeof CONFIG_KEYS)[number];
+
+export type Rail = 'oneclick_card' | 'allegro_pay';
+
+/**
+ * Allegro Smart! (regulations of 2026-03-02, verified 2026-09-04): delivery is free when the sum of item
+ * prices from ONE seller in one order is >= 49.90 PLN (per seller, never per basket); subscriptions
+ * started before 2026-03-02 keep 45 PLN (lockers/points) / 65 PLN (courier) until renewal.
+ */
+export const DEFAULT_SMART_THRESHOLD_PLN = 49.9;
+export const DEFAULT_SMART_SLACK_PLN = 25;
+export const DEFAULT_MAX_COMPLEMENTS = 1;
+export const DEFAULT_REORDER_COOLDOWN_DAYS = 30;
+export const DEFAULT_RAIL: Rail = 'oneclick_card';
 
 /** Values that must never appear in logs, snapshots, reports or the model context. */
 export const SECRET_KEYS: ReadonlySet<string> = new Set<string>([
@@ -47,6 +68,19 @@ export interface RuntimeConfig {
   refFullName?: string;
   refDeliveryAddress?: string;
   refPickupPoint?: string;
+  /** Smart! free-delivery threshold per seller (49.90; grandfathered subscriptions 45 / 65). */
+  smartThresholdPln: number;
+  /** Complement window above the gap to the threshold: delta <= price <= delta + slack. */
+  smartSlackPln: number;
+  /** How many complementary lines may be added to a basket (shown: up to 3). */
+  maxComplements: number;
+  /** A non-consumable bought within this many days is not proposed again. */
+  reorderCooldownDays: number;
+  /** wishlist.jsonl, purchase-history.jsonl, sellers.json, do-not-buy.txt live here (private). */
+  shoppingProfileDir: string;
+  defaultRail: Rail;
+  /** Expected Allegro account login (compared with the logged-in account; never printed). */
+  allegroLogin?: string;
   unknownKeys: string[];
 }
 
@@ -110,8 +144,28 @@ export function loadConfig(opts: LoadConfigOptions = {}): RuntimeConfig {
     refFullName: nonEmpty('REF_FULL_NAME'),
     refDeliveryAddress: nonEmpty('REF_DELIVERY_ADDRESS'),
     refPickupPoint: nonEmpty('REF_PICKUP_POINT'),
+    smartThresholdPln: numberOr(nonEmpty('SMART_THRESHOLD_PLN'), DEFAULT_SMART_THRESHOLD_PLN, 'SMART_THRESHOLD_PLN'),
+    smartSlackPln: numberOr(nonEmpty('SMART_SLACK_PLN'), DEFAULT_SMART_SLACK_PLN, 'SMART_SLACK_PLN'),
+    maxComplements: Math.max(0, Math.trunc(numberOr(nonEmpty('MAX_COMPLEMENTS'), DEFAULT_MAX_COMPLEMENTS, 'MAX_COMPLEMENTS'))),
+    reorderCooldownDays: Math.max(0, Math.trunc(numberOr(nonEmpty('REORDER_COOLDOWN_DAYS'), DEFAULT_REORDER_COOLDOWN_DAYS, 'REORDER_COOLDOWN_DAYS'))),
+    shoppingProfileDir: nonEmpty('SHOPPING_PROFILE_DIR') ?? path.join(privateDir, 'shopping-profile'),
+    defaultRail: railOr(nonEmpty('DEFAULT_RAIL')),
+    allegroLogin: nonEmpty('ALLEGRO_LOGIN'),
     unknownKeys,
   };
+}
+
+function numberOr(raw: string | undefined, fallback: number, key: string): number {
+  if (raw === undefined) return fallback;
+  const n = Number(raw.replace(',', '.'));
+  if (!Number.isFinite(n) || n < 0) throw new Error(`${key} in config.env must be a non-negative number, got "${raw}"`);
+  return n;
+}
+
+function railOr(raw: string | undefined): Rail {
+  if (raw === undefined) return DEFAULT_RAIL;
+  if (raw === 'oneclick_card' || raw === 'allegro_pay') return raw;
+  throw new Error(`DEFAULT_RAIL in config.env must be oneclick_card or allegro_pay, got "${raw}"`);
 }
 
 /** Non-empty REF_* values: everything the redaction filter must replace with [REDACTED]. */

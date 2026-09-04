@@ -1,0 +1,6 @@
+# do-not-buy.txt — one title or pattern per line (synthetic example).
+# A plain line blocks an offer whose title contains it (or all of its words); /…/ is a case-insensitive regex.
+DIN 7991 M3
+DIN 7991 M5
+SUNLU PET-G
+/adapter\s+1\/4.*3\/8/

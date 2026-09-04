@@ -14,7 +14,7 @@ import type { Page } from 'playwright';
 import { hostAllowed, hostOf, urlAllowed, DEFAULT_ALLOWLIST } from './allowlist.js';
 import type { AuditLog } from './audit.js';
 import { detectBlock, detectLoggedIn, sleep } from './browser.js';
-import type { RuntimeConfig } from './config.js';
+import type { Rail, RuntimeConfig } from './config.js';
 import { checkMandate, formatCheck } from './mandate.js';
 import { parsePln } from './offers.js';
 import { resolveSelector, type SelectorMap } from './selectors.js';
@@ -22,7 +22,7 @@ import { EXIT, readState, writeAriaSnapshot, writeState, writeStepResult, stripQ
 import { StopError, type RunContext } from './stop.js';
 
 export const FLOW = 'checkout';
-export type Rail = 'oneclick_card' | 'allegro_pay';
+export type { Rail };
 
 export interface SelectedOffer {
   id: string;

@@ -1,0 +1,6 @@
+# purchase-history.jsonl — earlier orders (synthetic example). The runtime appends a line after every confirmed order.
+# {date, seller, title, qty, price_pln, category, offer_id?, source, consumable?, order_id?}
+{"date":"2026-07-21","seller":"example_fasteners_pl","title":"Śruba DIN 912 M5x16 A2 50 szt","qty":1,"price_pln":14.9,"category":"Крепёж и метизы","offer_id":"100000000001","source":"example"}
+{"date":"2026-08-05","seller":"example_fasteners_pl","title":"Rym-bolt DIN 580 M5 A4 4 szt","qty":1,"price_pln":23.7,"category":"Крепёж и метизы","offer_id":"100000000002","source":"example"}
+{"date":"2026-08-12","seller":"example_filament_pl","title":"Filament PETG 1,75 mm 1 kg czarny","qty":1,"price_pln":69,"category":"Расходники 3D-печати","offer_id":"100000000003","source":"example","consumable":true}
+{"date":"2026-08-24","seller":"example_seals_pl","title":"O-ring 62x2 NBR 10 szt","qty":1,"price_pln":9.5,"category":"Уплотнители, клеи и герметики","source":"example"}

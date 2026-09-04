@@ -31,6 +31,10 @@ export interface Offer {
   total_with_delivery_pln?: number | null;
   sponsored?: boolean;
   seller_type?: 'firma' | 'osoba' | 'unknown';
+  /** Basket mode: the wishlist label this offer was searched for (`asa search --need <label>`). */
+  need?: string;
+  /** Mandate category of the need (exact string from section 2), when known. */
+  category?: string;
 }
 
 export function offerUrl(id: string): string {
@@ -118,5 +122,7 @@ export function coerceOffer(raw: Record<string, unknown>, source: OfferSource = 
         : parsePln(raw.total_with_delivery_pln as string | number),
     sponsored: raw.sponsored === true ? true : undefined,
     seller_type: raw.seller_type === 'firma' || raw.seller_type === 'osoba' ? raw.seller_type : undefined,
+    need: typeof raw.need === 'string' && raw.need.trim() ? raw.need.trim() : undefined,
+    category: typeof raw.category === 'string' && raw.category.trim() ? raw.category.trim() : undefined,
   };
 }

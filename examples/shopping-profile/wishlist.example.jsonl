@@ -1,0 +1,7 @@
+# wishlist.jsonl — what the agent may buy next (synthetic example; copy to <private>/shopping-profile/wishlist.jsonl)
+# {label, query_pl, category, qty, max_item_pln?, priority, project?, spec?, source?, consumable?}
+# category must be one of the mandate's section-2 categories, character for character. No addresses, phones, locker codes.
+{"label":"nakretka-niska-m5","query_pl":"nakrętka niska M5 DIN 439 A2 20 szt","category":"Крепёж и метизы","qty":1,"max_item_pln":25,"priority":1,"spec":{"thread":"M5","material":"A2","pack":20},"source":"[[Example note — M5 threads]]"}
+{"label":"nakretka-wbijana-m5","query_pl":"nakrętka wbijana M5 DIN 1624 100 szt","category":"Крепёж и метизы","qty":1,"max_item_pln":30,"priority":1,"spec":{"thread":"M5","pack":100},"source":"[[Example note — wall panel]]"}
+{"label":"klej-sztyft","query_pl":"klej w sztyfcie 43 g","category":"Уплотнители, клеи и герметики","qty":2,"max_item_pln":15,"priority":2,"consumable":true,"source":"[[Example note — 3D printing consumables]]"}
+{"label":"rzep-dwustronny","query_pl":"rzep dwustronny 20 mm 1 m","category":"Мелочи для дома и мастерской","qty":1,"max_item_pln":20,"priority":3,"source":"[[Example note — workshop]]"}

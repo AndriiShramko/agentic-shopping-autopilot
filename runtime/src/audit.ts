@@ -22,6 +22,10 @@ export const AUDIT_EVENTS = [
   'mandate_amended',
   'mandate_signed',
   'limit_override',
+  // Smart! basket (2026-09-04)
+  'basket_planned',
+  'basket_approved',
+  'complementary_proposed',
 ] as const;
 export type AuditEventName = (typeof AUDIT_EVENTS)[number];
 

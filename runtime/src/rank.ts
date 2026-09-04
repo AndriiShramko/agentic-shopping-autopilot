@@ -14,6 +14,10 @@ export interface RankOptions {
   remainingPln: number;
   allowedHosts?: readonly string[];
   minSellerRating?: number;
+  /** Basket mode: the item price alone must not exceed the per-item limit of the mandate. */
+  perItemLimitPln?: number;
+  /** Sellers from the profile's avoid list (case-insensitive logins). */
+  avoidSellers?: readonly string[];
 }
 
 export interface RankedOffer extends Offer {
@@ -56,8 +60,10 @@ export function rejectReason(o: Offer, opts: RankOptions): string | null {
   if (o.condition === 'unknown') return 'condition_unknown';
   const total = totalPln(o);
   if (total === null) return 'shipping_unknown';
+  if (opts.perItemLimitPln !== undefined && o.price_pln > opts.perItemLimitPln) return 'over_item_limit';
   if (total > opts.perPurchaseLimitPln) return 'over_purchase_limit';
   if (total > opts.remainingPln) return 'over_remaining_aggregate';
+  if (opts.avoidSellers?.some((s) => s.trim().toLowerCase() === o.seller.trim().toLowerCase() && s.trim())) return 'seller_avoided';
   const minRating = opts.minSellerRating ?? 98;
   const sellerOk = o.smart || o.super_seller || (o.seller_rating !== null && o.seller_rating >= minRating);
   if (!sellerOk) return o.seller_rating === null ? 'seller_rating_unknown' : 'seller_rating_low';

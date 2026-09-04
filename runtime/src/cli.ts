@@ -4,8 +4,11 @@
  *
  *   asa mandate:check [--amount N] [--category C] [--domain D] [--draft]
  *   asa run:start --command "..." [--mode cdp|mcp]
- *   asa search --query Q [--source api|serp|state] [--auth client|device] [--limit N]
+ *   asa search --query Q [--source api|serp|state] [--auth client|device] [--limit N] [--need LABEL] [--append] [--category C]
  *   asa select --id OFFER_ID --category C --rationale "..."
+ *   asa basket:plan [--slack N] [--max-complements N] [--primary "label1;label2"] [--assumptions "a; b"]
+ *   asa basket:approve --reply "<the user's one reply>" --by "<name> (chat)"
+ *   asa profile:check
  *   asa checkout --step N [--rail oneclick_card|allegro_pay]
  *   asa ref:capture
  *   asa browser:check
@@ -23,12 +26,14 @@ import path from 'node:path';
 import { amendMandateLimits, signMandate, type OverrideRecord } from './amend.js';
 import { AuditLog, newRunId } from './audit.js';
 import { ApiConfigError, ApiNotVerifiedError, getToken, searchListing } from './api.js';
+import { applyReply, formatPlanRu, parseReply, planBaskets, proposeComplements, round2, type BasketOffer, type BasketPlan, type ComplementProposal, type Need } from './basket.js';
 import { connectChannelB, detectBlock, detectLoggedIn } from './browser.js';
 import { runStep, STEP_NAMES, type Rail, type SelectedOffer } from './checkout.js';
-import { loadConfig, refValues, writeConfigValues } from './config.js';
-import { checkMandate, formatCheck } from './mandate.js';
+import { loadConfig, refValues, writeConfigValues, type RuntimeConfig } from './config.js';
+import { checkMandate, formatCheck, type MandateLimits } from './mandate.js';
 import { coerceOffer, type Offer } from './offers.js';
-import { filterAndRank } from './rank.js';
+import { boughtBefore, checkProfileFiles, formatProfileCheck, isBlocked, isConsumableCategory, loadProfile, purchasesFromSeller, recentlyBought, wishlistMatch } from './profile.js';
+import { filterAndRank, type Rejected, type RankedOffer } from './rank.js';
 import { computeMetrics, formatReport, summarizeRun } from './report.js';
 import { addSelectorDomain, loadSelectors, setSelectorCss } from './selectors.js';
 import { searchSerp } from './serp.js';
@@ -83,6 +88,68 @@ function currentRun(cfg: ReturnType<typeof loadConfig>): RunState {
   if (r) return r;
   const res = checkMandate({ config: cfg, requireSigned: false });
   return { run_id: newRunId(), mandate_id: res.mandateId ?? 'unknown', started: new Date().toISOString(), mode: 'cdp' };
+}
+
+/** .state/offers.json — one search, or several needs appended with `search --need L --append`. */
+interface OffersState {
+  query?: string;
+  source?: string;
+  ts: string;
+  per_purchase_limit_pln?: number;
+  per_item_limit_pln?: number;
+  remaining_pln?: number | null;
+  accepted: RankedOffer[];
+  rejected: Rejected[];
+  needs?: { need: string; query?: string; category?: string; source?: string; ts: string; accepted: number; rejected: number }[];
+}
+
+/** .state/basket-plan.json — what `basket:plan` proposed and `basket:approve` resolves. */
+interface BasketPlanState {
+  run_id: string;
+  ts: string;
+  needs: Need[];
+  primary: string[];
+  plan: BasketPlan;
+  proposal: ComplementProposal;
+  threshold_pln: number;
+  slack_pln: number;
+  max_complements: number;
+  remaining_pln?: number;
+  text: string;
+}
+
+function removeState(...names: string[]): void {
+  for (const f of names) {
+    const p = path.join(path.dirname(statePath('run.json')), f);
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+  }
+}
+
+/**
+ * One-time over-limit approval for the current run (owner decision 2026-09-04): amounts up to the
+ * ceiling signed in the mandate, item and order limits only, never the aggregate one. Shared by
+ * `asa override` and `basket:approve` («ок <сумма>»).
+ */
+function recordOverride(cfg: RuntimeConfig, audit: AuditLog, run: RunState, amount: number, by: string, offerId?: string, note?: string): { ok: boolean; message: string } {
+  const limits = checkMandate({ config: cfg, requireSigned: false }).parsed?.limits;
+  const cap = limits?.overrideMaxPln;
+  if (cap === undefined) {
+    return { ok: false, message: 'STOP: the mandate has no one-time approval ceiling line ("Разовое подтверждение сверх лимита: разрешено до ≤ N PLN"); add it with mandate:amend --override-max N and re-sign' };
+  }
+  if (amount > cap + 0.001) {
+    return { ok: false, message: `STOP: ${amount.toFixed(2)} PLN exceeds the one-time approval ceiling ${cap} PLN; raise it with mandate:amend --override-max and re-sign` };
+  }
+  const rec: OverrideRecord = { run_id: run.run_id, amount_pln: amount, approved_by: by, ts: new Date().toISOString(), note, offer_id: offerId };
+  writeState('override.json', rec);
+  audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'limit_override', data: { amount_pln: amount, approved_by: by, offer_id: rec.offer_id, note: rec.note } });
+  return { ok: true, message: `one-time approval recorded for run ${run.run_id}: up to ${amount.toFixed(2)} PLN (by ${by}); item and order limits only, the aggregate limit still applies` };
+}
+
+function mandateLimits(cfg: RuntimeConfig, audit: AuditLog, run: RunState): { limits: Partial<MandateLimits>; spent: number; remaining?: number } {
+  const limits = checkMandate({ config: cfg, requireSigned: false }).parsed?.limits ?? {};
+  const spent = audit.spentPln(run.mandate_id);
+  const remaining = limits.aggregatePln !== undefined ? round2(limits.aggregatePln - spent) : undefined;
+  return { limits, spent, remaining };
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -157,20 +224,12 @@ async function main(argv: string[]): Promise<number> {
       const by = str(args, 'by');
       if (!amount || !by) throw new Error('usage: asa override --amount N --by "<principal name> (chat)" [--offer-id ID] [--note "..."]');
       const run = currentRun(cfg);
-      const limits = checkMandate({ config: cfg, requireSigned: false }).parsed?.limits;
-      const cap = limits?.overrideMaxPln;
-      if (cap === undefined) {
-        process.stderr.write('STOP: the mandate has no one-time approval ceiling line ("Разовое подтверждение сверх лимита: разрешено до ≤ N PLN"); add it with mandate:amend --override-max N and re-sign\n');
+      const r = recordOverride(cfg, audit, run, amount, by, str(args, 'offer-id'), str(args, 'note'));
+      if (!r.ok) {
+        process.stderr.write(r.message + '\n');
         return EXIT.STOP;
       }
-      if (amount > cap + 0.001) {
-        process.stderr.write(`STOP: ${amount.toFixed(2)} PLN exceeds the one-time approval ceiling ${cap} PLN; raise it with mandate:amend --override-max and re-sign\n`);
-        return EXIT.STOP;
-      }
-      const rec: OverrideRecord = { run_id: run.run_id, amount_pln: amount, approved_by: by, ts: new Date().toISOString(), note: str(args, 'note'), offer_id: str(args, 'offer-id') };
-      writeState('override.json', rec);
-      audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'limit_override', data: { amount_pln: amount, approved_by: by, offer_id: rec.offer_id, note: rec.note } });
-      out(`one-time approval recorded for run ${run.run_id}: up to ${amount.toFixed(2)} PLN (by ${by}); item and order limits only, the aggregate limit still applies`);
+      out(r.message);
       return EXIT.OK;
     }
 
@@ -180,10 +239,7 @@ async function main(argv: string[]): Promise<number> {
       const res = checkMandate({ config: cfg, requireSigned: false });
       const run: RunState = { run_id: newRunId(), mandate_id: res.mandateId ?? 'unknown', started: new Date().toISOString(), mode, command };
       writeState('run.json', run);
-      for (const f of ['offers.json', 'selected.json', 'step-result.json', 'override.json']) {
-        const p = path.join(path.dirname(statePath('run.json')), f);
-        if (fs.existsSync(p)) fs.unlinkSync(p);
-      }
+      removeState('offers.json', 'selected.json', 'step-result.json', 'override.json', 'basket-plan.json', 'basket.json');
       audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'command_received', data: { command, mode } });
       out(`run ${run.run_id} started (mandate ${run.mandate_id}, mode ${mode})`);
       return EXIT.OK;
@@ -195,10 +251,18 @@ async function main(argv: string[]): Promise<number> {
       if (!query && source !== 'state') throw new Error('--query is required');
       const run = currentRun(cfg);
       const mres = checkMandate({ config: cfg, requireSigned: false });
-      const per = num(args, 'limit') ?? mres.parsed?.limits.perPurchasePln;
-      if (per === undefined) throw new Error('per-purchase limit unknown: fill section 2 of the mandate or pass --limit');
+      const perOrder = num(args, 'limit') ?? mres.parsed?.limits.perPurchasePln;
+      if (perOrder === undefined) throw new Error('per-purchase limit unknown: fill section 2 of the mandate or pass --limit');
+      // basket mode: a line is capped by the per-item limit (the order limit is checked on the whole basket)
+      const perItem = num(args, 'limit') ?? mres.parsed?.limits.perItemPln;
+      const per = perItem ?? perOrder;
       const spent = audit.spentPln(run.mandate_id);
       const remaining = (mres.parsed?.limits.aggregatePln ?? Number.POSITIVE_INFINITY) - spent;
+      const need = str(args, 'need');
+      const append = args.append === true;
+      const profile = loadProfile(cfg.shoppingProfileDir);
+      const wish = need ? profile.wishlist.find((l) => l.label === need) : undefined;
+      const category = str(args, 'category') ?? wish?.category;
       let offers: Offer[] = [];
       let usedSource = source;
       if (source === 'api') {
@@ -224,14 +288,42 @@ async function main(argv: string[]): Promise<number> {
         }
       }
       if (usedSource === 'state') {
-        const raw = readState<{ offers?: Record<string, unknown>[] } | Record<string, unknown>[]>('offers.json');
+        // MCP mode: the session writes raw offers to --file (default .state/offers.session.json; legacy: offers.json),
+        // so that `--append` can merge several needs into offers.json without clobbering its own input.
+        const file = str(args, 'file') ?? (fs.existsSync(statePath('offers.session.json')) ? statePath('offers.session.json') : statePath('offers.json'));
+        const raw = fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf8')) as { offers?: Record<string, unknown>[] } | Record<string, unknown>[]) : undefined;
         const list = Array.isArray(raw) ? raw : (raw?.offers ?? []);
         offers = list.map((o) => coerceOffer(o, 'session')).filter((o): o is Offer => o !== null);
       }
-      const ranked = filterAndRank(offers, { perPurchaseLimitPln: per, remainingPln: remaining });
-      writeState('offers.json', { query, source: usedSource, ts: new Date().toISOString(), per_purchase_limit_pln: per, remaining_pln: remaining, accepted: ranked.accepted, rejected: ranked.rejected });
-      audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'search_done', flow: 'search', data: { query, source: usedSource, offers_total: offers.length, accepted: ranked.accepted.length, rejected: ranked.rejected.length } });
-      out(`search "${query ?? '(state)'}" via ${usedSource}: ${offers.length} offers, ${ranked.accepted.length} within the mandate`);
+      if (need || category) offers = offers.map((o) => ({ ...o, need: need ?? o.need, category: category ?? o.category }));
+      // An offer above the item / order limit but within the signed one-time-approval ceiling stays in the list:
+      // the proposal shows it with "⚠️ … ответь «ок <сумма>»" and never buys it without that reply. No ceiling line
+      // in the mandate (or an explicit --limit) = the limits are hard.
+      const ceiling = num(args, 'limit') === undefined ? mres.parsed?.limits.overrideMaxPln : undefined;
+      const itemCap = perItem === undefined ? undefined : ceiling !== undefined ? Math.max(perItem, ceiling) : perItem;
+      const orderCap = ceiling !== undefined ? Math.max(perOrder, ceiling) : perOrder;
+      const ranked = filterAndRank(offers, { perPurchaseLimitPln: orderCap, remainingPln: remaining, perItemLimitPln: itemCap, avoidSellers: profile.sellers.avoid });
+      const ts = new Date().toISOString();
+      const previous = append ? readState<OffersState>('offers.json') : undefined;
+      const needKey = need ?? query ?? '';
+      // a repeated search for the same need replaces its earlier offers; other needs stay
+      const keep = <T extends { need?: string }>(list: T[] | undefined) => (list ?? []).filter((o) => (o.need ?? '') !== needKey);
+      const keepRejected = (list: Rejected[] | undefined) => (list ?? []).filter((r) => (r.offer.need ?? '') !== needKey);
+      const merged: OffersState = {
+        query: previous ? previous.query : query,
+        source: previous && previous.source !== usedSource ? 'mixed' : usedSource,
+        ts,
+        per_purchase_limit_pln: perOrder,
+        per_item_limit_pln: perItem,
+        remaining_pln: Number.isFinite(remaining) ? remaining : null,
+        accepted: [...keep(previous?.accepted), ...ranked.accepted],
+        rejected: [...keepRejected(previous?.rejected), ...ranked.rejected],
+        needs: [...(previous?.needs ?? []).filter((n) => n.need !== needKey), { need: needKey, query, category, source: usedSource, ts, accepted: ranked.accepted.length, rejected: ranked.rejected.length }],
+      };
+      if (!append && !need) delete merged.needs;
+      writeState('offers.json', merged);
+      audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'search_done', flow: 'search', data: { query, need, source: usedSource, offers_total: offers.length, accepted: ranked.accepted.length, rejected: ranked.rejected.length, appended: append } });
+      out(`search "${query ?? '(state)'}"${need ? ` for need "${need}"` : ''} via ${usedSource}: ${offers.length} offers, ${ranked.accepted.length} within the mandate${append ? ` (appended; ${merged.accepted.length} accepted in total)` : ''}`);
       for (const o of ranked.accepted.slice(0, 10)) out(`  #${o.rank} ${o.total_pln.toFixed(2)} PLN  ${o.smart ? 'Smart ' : ''}${o.seller || '?'}  ${o.title.slice(0, 70)}  ${o.url}`);
       const reasons = new Map<string, number>();
       for (const r of ranked.rejected) reasons.set(r.reason, (reasons.get(r.reason) ?? 0) + 1);
@@ -253,6 +345,203 @@ async function main(argv: string[]): Promise<number> {
       audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'offer_selected', flow: 'search', data: { id: sel.id, kind: offer.kind ?? 'offer', url: sel.url, title: sel.title, total_pln: sel.total_pln, seller: sel.seller, smart: offer.smart, super_seller: offer.super_seller, category, rationale } });
       out(`selected ${sel.id} ${sel.total_pln.toFixed(2)} PLN ${sel.title}`);
       return EXIT.OK;
+    }
+
+    case 'basket:plan': {
+      // Smart! basket (design synthesis 2026-09-04, section 1): one message, one reply.
+      const run = currentRun(cfg);
+      const st = readState<OffersState>('offers.json');
+      if (!st || !Array.isArray(st.accepted) || st.accepted.length === 0) {
+        out('no accepted offers in .state/offers.json: run `asa search --query "<query_pl>" --need <label> --append` for each wishlist line first');
+        return EXIT.DECISION;
+      }
+      const { limits, remaining } = mandateLimits(cfg, audit, run);
+      const profile = loadProfile(cfg.shoppingProfileDir);
+      const check = checkProfileFiles(cfg.shoppingProfileDir, { categories: limits.categories });
+      if (check.pii) {
+        out(formatProfileCheck(check));
+        return EXIT.STOP;
+      }
+      const accepted = st.accepted as BasketOffer[];
+      const labels = Array.from(new Set(accepted.map((o) => o.need ?? st.query ?? 'need')));
+      const primaryArg = str(args, 'primary');
+      const primary = primaryArg ? primaryArg.split(';').map((s) => s.trim()).filter(Boolean) : labels;
+      const needOf = (label: string): Need => {
+        const w = profile.wishlist.find((l) => l.label === label);
+        const fromSearch = st.needs?.find((n) => n.need === label);
+        return { label, category: w?.category ?? fromSearch?.category ?? accepted.find((o) => o.need === label)?.category, priority: w?.priority, qty: w?.qty, max_item_pln: w?.max_item_pln, source: w?.source };
+      };
+      const needs = primary.map(needOf);
+      const offers: BasketOffer[] = accepted.map((o) => {
+        const label = o.need ?? (labels.length === 1 ? labels[0] : undefined);
+        const n = label ? needOf(label) : undefined;
+        return { ...o, need: label, category: o.category ?? n?.category };
+      });
+      const bb = (o: Offer) => {
+        const rec = boughtBefore(profile.history, o);
+        return rec ? { date: rec.date } : false;
+      };
+      const threshold = cfg.smartThresholdPln;
+      const plan = planBaskets(needs, offers, { threshold, perItemLimit: limits.perItemPln, perOrderLimit: limits.perPurchasePln, maxItems: limits.maxItems, remainingAggregate: remaining, boughtBeforeFn: bb, avoidSellers: profile.sellers.avoid });
+      const slack = num(args, 'slack') ?? cfg.smartSlackPln;
+      const maxComplements = num(args, 'max-complements') ?? cfg.maxComplements;
+      // complement candidates: accepted offers of the chosen seller that are not primary needs (lower-priority wishlist lines, seller-store finds)
+      const candidates = offers.filter((o) => !primary.includes(o.need ?? ''));
+      const proposal = proposeComplements(plan, candidates, {
+        threshold,
+        slack,
+        perItemLimit: limits.perItemPln,
+        perOrderLimit: limits.perPurchasePln,
+        maxItems: limits.maxItems,
+        categories: limits.categories,
+        primaryCategory: needs[0]?.category,
+        boughtBeforeFn: bb,
+        wishlistFn: (o) => wishlistMatch(profile.wishlist, o) !== undefined,
+        isBlockedFn: (o) => isBlocked(profile, o).blocked,
+        recentlyBoughtFn: (o) => recentlyBought(profile.history, o, cfg.reorderCooldownDays) !== undefined,
+        consumableFn: (o) => isConsumableCategory(o.category) || wishlistMatch(profile.wishlist, o)?.consumable === true,
+        maxShow: 3,
+      });
+      if (maxComplements <= 0) proposal.shown = [];
+      const seller = plan.orders[0]?.seller ?? '';
+      const assumptions = str(args, 'assumptions')?.split(';').map((s) => s.trim()).filter(Boolean);
+      const notTaken = str(args, 'not-taken')?.split(';').map((s) => s.trim()).filter(Boolean);
+      const needSources = Object.fromEntries(needs.filter((n) => n.source).map((n) => [n.label, n.source as string]));
+      const text = formatPlanRu(plan, proposal, {
+        runId: run.run_id,
+        remainingPln: remaining,
+        limits: { perItem: limits.perItemPln, perOrder: limits.perPurchasePln, maxItems: limits.maxItems },
+        rail: cfg.defaultRail,
+        purchaseDates: purchasesFromSeller(profile.history, seller).map((r) => r.date),
+        assumptions,
+        needSources,
+        notTaken,
+        maxComplements,
+      });
+      const state: BasketPlanState = { run_id: run.run_id, ts: new Date().toISOString(), needs, primary, plan, proposal, threshold_pln: threshold, slack_pln: slack, max_complements: maxComplements, remaining_pln: remaining, text };
+      writeState('basket-plan.json', state);
+      removeState('basket.json');
+      audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'basket_planned', flow: 'basket', data: { seller, orders: plan.orders.length, lines: plan.orders.map((o) => o.lines.map((l) => ({ id: l.id, need: l.need, price_pln: l.price_pln, smart: l.smart }))), subtotal_pln: plan.subtotal_pln, expected_pln: plan.expected_pln, ceiling_pln: plan.ceiling_pln, free_delivery: plan.orders[0]?.free_delivery ?? false, threshold_pln: threshold, needs_override: plan.needs_override, aggregate_exceeded: plan.aggregate_exceeded, uncovered: plan.uncovered, plans_considered: plan.plans_considered } });
+      if (proposal.applicable) {
+        audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'complementary_proposed', flow: 'basket', data: { delta_pln: proposal.delta_pln, window: proposal.window, considered: proposal.considered, skipped: proposal.skipped, shown: proposal.shown.map((c) => ({ n: c.n, id: c.offer.id, price_pln: c.price_pln, tier: c.tier, score: c.score })) } });
+      }
+      out(text);
+      // diagnostics for the session go to stderr so the message above can be relayed as is
+      const skipped = Object.entries(proposal.skipped).map(([k, v]) => `${k}=${v}`).join(', ');
+      if (skipped) process.stderr.write(`complements: ${proposal.shown.length} shown of ${proposal.considered} candidates (skipped: ${skipped}${proposal.skipped.outside_mandate_categories ? '; a candidate needs a mandate category: pass --category to `search --need`' : ''})\n`);
+      else if (!proposal.applicable && proposal.reason) process.stderr.write(`complements: not applicable (${proposal.reason})\n`);
+      if (plan.uncovered.length) process.stderr.write(`uncovered needs: ${plan.uncovered.join(', ')}\n`);
+      if (check.stale) process.stderr.write('profile files are older than 14 days — rebuild them from the vault (asa profile:check)\n');
+      return plan.orders.length ? EXIT.OK : EXIT.DECISION;
+    }
+
+    case 'basket:approve': {
+      const reply = str(args, 'reply');
+      const by = str(args, 'by');
+      if (!reply || !by) throw new Error('usage: asa basket:approve --reply "<the user\'s reply>" --by "<principal name> (chat)"');
+      const run = currentRun(cfg);
+      const planState = readState<BasketPlanState>('basket-plan.json');
+      if (!planState) throw new Error('no .state/basket-plan.json: run `asa basket:plan` first');
+      if (planState.run_id !== run.run_id) throw new Error(`basket-plan.json belongs to run ${planState.run_id}, current run is ${run.run_id}: rerun asa basket:plan`);
+      const parsed = parseReply(reply, { needsOverride: planState.plan.needs_override });
+      const again = (why: string): number => {
+        out(`не понял: ${why}`);
+        out(planState.text);
+        return EXIT.DECISION;
+      };
+      switch (parsed.kind) {
+        case 'no': {
+          removeState('basket-plan.json', 'basket.json', 'selected.json', 'override.json');
+          audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'stop', flow: 'basket', data: { reason: 'user_declined', reply } });
+          writeStepResult({ flow: 'basket', step: 'approve', status: 'stop', url: '', note: 'STOP: user_declined' });
+          out('прогон закрыт: «нет» — ничего не куплено, корзина не собрана');
+          return EXIT.STOP;
+        }
+        case 'limit_item':
+          out(`лимит позиции → ${parsed.amount} PLN: выполни\n  asa mandate:amend --per-item ${parsed.amount}\nзатем покажи новый хэш, дождись «ок <hash8>» и выполни asa mandate:sign --by "${by}" --hash <sha256>; после этого повтори asa basket:plan`);
+          return EXIT.DECISION;
+        case 'limit_order':
+          out(`лимит заказа → ${parsed.amount} PLN: выполни\n  asa mandate:amend --per-order ${parsed.amount}\nзатем покажи новый хэш, дождись «ок <hash8>» и выполни asa mandate:sign --by "${by}" --hash <sha256>; после этого повтори asa basket:plan`);
+          return EXIT.DECISION;
+        case 'unknown':
+          return again(planState.plan.needs_override ? 'предложение требует разового подтверждения суммой («ок <сумма>»), голое «ок» не принимается' : `ответ «${reply}» не распознан`);
+        default:
+          break;
+      }
+      const { limits, remaining } = mandateLimits(cfg, audit, run);
+      const res = applyReply(planState.plan, planState.proposal, parsed, { threshold: planState.threshold_pln, perItemLimit: limits.perItemPln, perOrderLimit: limits.perPurchasePln, maxItems: limits.maxItems, remainingAggregate: remaining, maxComplements: planState.max_complements });
+      if ('error' in res) return again(res.error);
+      if (res.aggregate_exceeded) {
+        process.stderr.write(`STOP: ${res.expected_pln.toFixed(2)} PLN exceeds the remaining aggregate limit ${remaining?.toFixed(2)} PLN; a one-time approval never covers it\n`);
+        audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'stop', flow: 'basket', data: { reason: 'mandate_red', failed: ['aggregate'], amount_pln: res.expected_pln, remaining_pln: remaining } });
+        return EXIT.STOP;
+      }
+      let overridePln: number | undefined;
+      if (res.needs_override) {
+        const need = res.override_required_pln ?? 0;
+        if (parsed.kind !== 'amount') return again(`после «${reply}» лимиты всё ещё превышены — нужно «ок ${need.toFixed(2).replace('.', ',')}» (разово) или «лимит позиции/заказа N»`);
+        const amount = parsed.amount as number;
+        if (amount + 0.001 < need) return again(`«ок ${amount.toFixed(2).replace('.', ',')}» меньше требуемых ${need.toFixed(2).replace('.', ',')} PLN`);
+        const r = recordOverride(cfg, audit, run, amount, by, res.override_offer_id, reply);
+        if (!r.ok) {
+          process.stderr.write(r.message + '\n');
+          return EXIT.STOP;
+        }
+        out(r.message);
+        overridePln = amount;
+      } else if (parsed.kind === 'amount') {
+        out(`(«ок ${(parsed.amount as number).toFixed(2).replace('.', ',')}»: лимиты не превышены, разовое подтверждение не требуется — утверждаю как A)`);
+      }
+      const first = res.items[0];
+      const primaryLine = res.items.find((l) => !l.complement) ?? first;
+      const primaryNeed = planState.needs.find((n) => n.label === primaryLine.need);
+      const category = primaryLine.category ?? primaryNeed?.category ?? '';
+      const maxLine = res.items.reduce((a, b) => (b.price_pln > a.price_pln ? b : a));
+      const rationale = `basket ${res.variant}${res.fallback_option ? '/' + res.fallback_option : ''} approved by ${by}: "${reply}"`;
+      const basket = {
+        run_id: run.run_id,
+        ts: new Date().toISOString(),
+        approved_by: by,
+        reply,
+        variant: res.variant,
+        fallback_option: res.fallback_option,
+        seller: res.seller,
+        items: res.items,
+        complement_id: res.complement?.id,
+        subtotal_pln: res.subtotal_pln,
+        expected_pln: res.expected_pln,
+        ceiling_pln: res.ceiling_pln,
+        free_delivery: res.free_delivery,
+        smart_all: res.smart_all,
+        threshold_pln: planState.threshold_pln,
+        price_pln: maxLine.price_pln,
+        total_pln: res.ceiling_pln,
+        category,
+        id: first.id,
+        url: first.url,
+        title: first.title,
+        offer_id: first.offer_id,
+        override_pln: overridePln,
+        rail: cfg.defaultRail,
+        other_orders: res.other_orders,
+      };
+      writeState('basket.json', basket);
+      // SelectedOffer shape: the existing single-offer checkout keeps working for one-line baskets
+      const sel: SelectedOffer = { id: first.id, url: first.url, title: first.title, total_pln: res.ceiling_pln, price_pln: maxLine.price_pln, seller: res.seller, category, rationale, offer_id: first.offer_id };
+      writeState('selected.json', sel);
+      audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'basket_approved', flow: 'basket', data: { approved_by: by, reply, variant: res.variant, fallback_option: res.fallback_option, seller: res.seller, items: res.items.map((l) => ({ id: l.id, need: l.need, price_pln: l.price_pln, smart: l.smart, complement: l.complement ?? false })), subtotal_pln: res.subtotal_pln, expected_pln: res.expected_pln, ceiling_pln: res.ceiling_pln, free_delivery: res.free_delivery, override_pln: overridePln, category } });
+      out(`корзина утверждена (${res.variant}${res.fallback_option ? ', запасной вариант ' + res.fallback_option : ''}): ${res.items.length} поз. у ${res.seller}, товары ${res.subtotal_pln.toFixed(2)}, ожидаемо ${res.expected_pln.toFixed(2)}, потолок ${res.ceiling_pln.toFixed(2)} PLN${res.free_delivery ? ' (Smart! доставка 0)' : ''}`);
+      if (res.other_orders.length) out(`ещё ${res.other_orders.length} заказ(а) у других продавцов — отдельный прогон каждый`);
+      if (res.items.length > 1) out('(checkout нескольких строк в одном заказе в этом инкременте не реализован: шаги 1–10 ведут первую строку; остальные — вручную или в следующем инкременте)');
+      return EXIT.OK;
+    }
+
+    case 'profile:check': {
+      const limits = checkMandate({ config: cfg, requireSigned: false }).parsed?.limits;
+      const c = checkProfileFiles(cfg.shoppingProfileDir, { categories: limits?.categories });
+      out(`profile dir: ${cfg.shoppingProfileDir}`);
+      out(formatProfileCheck(c));
+      return c.pii ? EXIT.STOP : c.stale || !c.ok ? EXIT.DECISION : EXIT.OK;
     }
 
     case 'checkout': {
@@ -374,7 +663,7 @@ async function main(argv: string[]): Promise<number> {
     }
 
     default:
-      out('usage: asa <mandate:check|mandate:amend|mandate:sign|override|run:start|search|select|checkout|ref:capture|browser:check|audit:append|audit:redact|report|metrics|selectors:set|selectors:domain> [options]');
+      out('usage: asa <mandate:check|mandate:amend|mandate:sign|override|run:start|search|select|basket:plan|basket:approve|profile:check|checkout|ref:capture|browser:check|audit:append|audit:redact|report|metrics|selectors:set|selectors:domain> [options]');
       return cmd ? EXIT.ERROR : EXIT.OK;
   }
 }

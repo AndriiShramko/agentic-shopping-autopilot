@@ -1,0 +1,4 @@
+{
+  "trusted": ["example_fasteners_pl", "example_filament_pl", "example_seals_pl"],
+  "avoid": ["example_slow_shipper", "example_dispute_2026"]
+}
