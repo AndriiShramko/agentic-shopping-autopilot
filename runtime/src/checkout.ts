@@ -134,8 +134,9 @@ async function recipientMatches(env: CheckoutEnv): Promise<{ ok: boolean; missin
 
 function gate(env: CheckoutEnv, amount: number): { ok: boolean; text: string } {
   const spent = env.audit.spentPln(env.ctx.mandate_id);
-  const override = readState<{ run_id: string; amount_pln: number; approved_by: string }>('override.json');
-  const overridePln = override && override.run_id === env.ctx.run_id ? override.amount_pln : undefined;
+  const override = readState<{ run_id: string; amount_pln: number; approved_by: string; offer_id?: string }>('override.json');
+  const overrideApplies = !!override && override.run_id === env.ctx.run_id && (!override.offer_id || override.offer_id === env.selected.id || override.offer_id === env.selected.offer_id);
+  const overridePln = overrideApplies ? override!.amount_pln : undefined;
   const res = checkMandate({ config: env.cfg, amountPln: amount, itemPln: env.selected.price_pln, overridePln, category: env.selected.category, domain: 'allegro.pl', spentPln: spent });
   env.audit.append({ ...env.ctx, event: 'mandate_checked', flow: FLOW, step: 8, data: { ok: res.ok, amount_pln: amount, item_pln: env.selected.price_pln, spent_pln: spent, remaining_pln: res.remainingPln, override_pln: overridePln, override_by: overridePln !== undefined ? override?.approved_by : undefined, failed: res.items.filter((i) => !i.ok).map((i) => i.id) } });
   return { ok: res.ok, text: formatCheck(res) };
@@ -214,7 +215,7 @@ export async function runStep(env: CheckoutEnv, step: number): Promise<StepOutco
       if (!g.ok) throw new StopError('mandate_red', { step, amount_pln: total });
       if (env.cfg.humanConfirm) {
         audit.append({ ...ctx, event: 'stop', flow: FLOW, step, data: { reason: 'human_confirm_flag', amount_pln: total } });
-        return done('human-confirm', 'HUMAN_CONFIRM=1: Andrii presses "Kupuję i płacę" himself', { amount_pln: total });
+        return done('human-confirm', 'HUMAN_CONFIRM=1: the user presses "Kupuję i płacę" in the browser window', { amount_pln: total });
       }
       return done('ok', 'mandate gate GREEN', { amount_pln: total });
     }
@@ -271,7 +272,7 @@ export async function waitForPaymentOutcome(env: CheckoutEnv, maxMs = 5 * 60_000
         offPlatform = true;
         challenged = true;
         audit.append({ ...ctx, event: 'challenge_3ds', flow: FLOW, step: 9, data: { phase: 'start' } });
-        process.stdout.write('3DS: подтверди в приложении банка (жду до 5 минут)\n');
+        process.stdout.write('3DS: confirm the payment in your banking app (waiting up to 5 minutes)\n');
       }
       await sleep(2000);
       continue;

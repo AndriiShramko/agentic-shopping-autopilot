@@ -4,7 +4,8 @@ Specifications and research digests behind Agentic Shopping Autopilot. Docs are 
 
 ## Recommended reading order
 
-1. [architecture.md](architecture.md) — start here: what is reused, what is built, how the MVP is wired, the project decisions.
+0. [user-guide.md](user-guide.md) — if you want to *use* it: install the skill and the runtime, sign the mandate, connect your notes, run the first purchase in your own browser.
+1. [architecture.md](architecture.md) — start here for the design: what is reused, what is built, how the MVP is wired, the project decisions.
 2. [mandate-spec.md](mandate-spec.md) — why AI agents refuse to pay and the purchase mandate that resolves it (template: [../examples/PURCHASE_MANDATE.template.md](../examples/PURCHASE_MANDATE.template.md)).
 3. [payments.md](payments.md) — what an agent can actually pay with in Poland under PSD2 / SCA.
 4. [site-skill-spec.md](site-skill-spec.md) and [registry.md](registry.md) — the skill format and how skills are distributed safely (reference skill: [../skills/allegro.pl/](../skills/allegro.pl/)).
@@ -15,6 +16,7 @@ Specifications and research digests behind Agentic Shopping Autopilot. Docs are 
 
 | Doc | What it answers |
 |---|---|
+| [user-guide.md](user-guide.md) | How to install the Allegro site skill and the `asa` runtime into Claude Code or Codex, sign a purchase mandate with per-item / per-order / aggregate limits, let the agent learn sizes, brands and quantities from your own notes, use your own browser and saved payment method, run a first purchase, and how Allegro Smart! free delivery is used. |
 | [architecture.md](architecture.md) | Can an AI shopping agent complete checkout and pay by itself on Allegro or OLX, where a human still steps in, what is reused vs built, the MVP roadmap and the first metric to measure. |
 | [mandate-spec.md](mandate-spec.md) | Why Claude / Codex refuse to pay, what Anthropic's and OpenAI's policies actually require, and how a pre-signed purchase mandate provides affirmative consent in advance. |
 | [payments.md](payments.md) | Every payment instrument an agent could use in Poland (saved card one-click, Allegro Pay, BLIK, virtual cards, Visa / Mastercard agent programmes), why 3DS / SCA challenges are unavoidable, and the MVP payment architecture. |

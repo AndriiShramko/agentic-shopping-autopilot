@@ -1,5 +1,5 @@
 # Flow: checkout and payment
-Runtime: `asa checkout --step N` (channel B, one step per call; `runtime/src/checkout.ts`). In MCP mode the operator session performs the same steps through the browser extension and records them with `asa audit:append`.
+Runtime: `asa checkout --step N` (channel B — the dedicated CDP profile, one step per call; `runtime/src/checkout.ts`). The browser extension (channel A) is used only to read pages and record selectors; the address, payment-method and pay steps run over channel B or are handed to the user (`HUMAN_CONFIRM=1`).
 1. Offer page (`step 1`): open the selected offer URL (allowlist check), confirm no block page and a logged-in session.
 2. Buy (`step 2`): `buy_now` for a single-item purchase (or `add_to_cart` → cart).
 3. Cart check (`step 3`): the cart total shown on the page equals the selected offer's total (price + delivery) to the grosz; any "auto-added" item/service (purchase protection, extra warranty) → remove; mismatch → STOP `mandate_deviation`.

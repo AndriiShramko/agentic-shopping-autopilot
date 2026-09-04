@@ -16,7 +16,7 @@ export const STATE_DIR = path.join(RUNTIME_ROOT, '.state');
 export const EXIT = {
   OK: 0,
   ERROR: 1,
-  /** A stop trigger fired: the run halts and the decision goes to Andrii (chat). */
+  /** A stop trigger fired: the run halts and the decision goes to the user (chat). */
   STOP: 2,
   /** The runtime could not resolve a step mechanically: the session decides, fixes, reruns. */
   DECISION: 3,

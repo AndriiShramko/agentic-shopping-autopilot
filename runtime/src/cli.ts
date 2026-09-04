@@ -15,7 +15,7 @@
  *   asa metrics
  *   asa selectors:set ID CSS   |   asa selectors:domain HOST
  *
- * Exit codes: 0 ok · 1 error · 2 STOP (decision to Andrii) · 3 the session must decide / fix / rerun.
+ * Exit codes: 0 ok · 1 error · 2 STOP (the decision goes to the user) · 3 the session must decide / fix / rerun.
  * Global: --private-dir PATH (or ASA_PRIVATE_DIR).
  */
 import fs from 'node:fs';
@@ -123,7 +123,9 @@ async function main(argv: string[]): Promise<number> {
       const r = amendMandateLimits(cfg.mandatePath, {
         perItemPln: num(args, 'per-item'),
         perPurchasePln: num(args, 'per-order'),
+        maxItems: num(args, 'max-items'),
         aggregatePln: num(args, 'total'),
+        overrideMaxPln: num(args, 'override-max'),
         validFrom: str(args, 'from'),
         validTo: str(args, 'to'),
         categories: cats ? cats.split(';').map((c) => c.trim()).filter(Boolean) : undefined,
@@ -153,12 +155,22 @@ async function main(argv: string[]): Promise<number> {
       // One-time over-limit approval for the CURRENT run only (owner decision 2026-09-04).
       const amount = num(args, 'amount');
       const by = str(args, 'by');
-      if (!amount || !by) throw new Error('usage: asa override --amount N --by "<principal name> (chat)" [--note "..."]');
+      if (!amount || !by) throw new Error('usage: asa override --amount N --by "<principal name> (chat)" [--offer-id ID] [--note "..."]');
       const run = currentRun(cfg);
-      const rec: OverrideRecord = { run_id: run.run_id, amount_pln: amount, approved_by: by, ts: new Date().toISOString(), note: str(args, 'note') };
+      const limits = checkMandate({ config: cfg, requireSigned: false }).parsed?.limits;
+      const cap = limits?.overrideMaxPln;
+      if (cap === undefined) {
+        process.stderr.write('STOP: the mandate has no one-time approval ceiling line ("Разовое подтверждение сверх лимита: разрешено до ≤ N PLN"); add it with mandate:amend --override-max N and re-sign\n');
+        return EXIT.STOP;
+      }
+      if (amount > cap + 0.001) {
+        process.stderr.write(`STOP: ${amount.toFixed(2)} PLN exceeds the one-time approval ceiling ${cap} PLN; raise it with mandate:amend --override-max and re-sign\n`);
+        return EXIT.STOP;
+      }
+      const rec: OverrideRecord = { run_id: run.run_id, amount_pln: amount, approved_by: by, ts: new Date().toISOString(), note: str(args, 'note'), offer_id: str(args, 'offer-id') };
       writeState('override.json', rec);
-      audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'limit_override', data: { amount_pln: amount, approved_by: by, note: rec.note } });
-      out(`one-time approval recorded for run ${run.run_id}: up to ${amount.toFixed(2)} PLN (by ${by})`);
+      audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'limit_override', data: { amount_pln: amount, approved_by: by, offer_id: rec.offer_id, note: rec.note } });
+      out(`one-time approval recorded for run ${run.run_id}: up to ${amount.toFixed(2)} PLN (by ${by}); item and order limits only, the aggregate limit still applies`);
       return EXIT.OK;
     }
 

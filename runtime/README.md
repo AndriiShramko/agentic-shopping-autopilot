@@ -10,7 +10,7 @@ points.
 
 | Concern | Module | Rule |
 |---|---|---|
-| Purchase mandate | `src/mandate.ts` | SHA-256 over the lines from `## 1.` to the line before `## 7.` (LF, no BOM, trailing newlines dropped) must equal the hash in section 7 **and** `MANDATE_SHA256` in `config.env`; `status: signed`; `MANDATE_REVOKED` absent; validity (Europe/Warsaw, inclusive); per-purchase and aggregate limits; category and domain allowlists. |
+| Purchase mandate | `src/mandate.ts`, `src/amend.ts` | SHA-256 over the lines from `## 1.` to the line before `## 7.` (LF, no BOM, trailing newlines dropped) must equal the hash in section 7 **and** `MANDATE_SHA256` in `config.env`; `status: signed`; `MANDATE_REVOKED` absent; validity (Europe/Warsaw, inclusive); per-item, per-order, lines-per-order and aggregate limits; category and domain allowlists. Quick limit changes: `mandate:amend` rewrites section 2 and drops to `draft`; the principal confirms the new hash in chat and `mandate:sign` signs. A one-time over-limit approval (`override`, chat-confirmed amount) lifts the item and order limits up to the ceiling signed in the mandate and never the aggregate limit. |
 | Spend tracking | `src/audit.ts` | Append-only JSONL (`measurements/raw/audit-YYYY-MM.jsonl`); "spent" = sum of `order_confirmed.amount_pln` for the mandate; redacted monthly export is the only copy that goes into git. |
 | Secrets | `src/config.ts`, `src/redact.ts` | Recipient reference (`REF_*`) and API secrets are read for mechanical checks only, never printed, logged or written into snapshots; address-like keys are dropped from every audit line. |
 | Domains | `src/allowlist.ts` | `*.allegro.pl`, `*.payu.com` plus hosts recorded in `skills/allegro.pl/selectors.yaml` → `domains`. The bank's 3DS page is deliberately **not** allowlisted: during a challenge the runtime neither reads nor clicks, it waits (≤ 5 min) for the return. |
@@ -37,7 +37,10 @@ Configuration lives in the **private** repository (`ASA_PRIVATE_DIR` or `--priva
 ## Commands
 
 ```
-asa mandate:check [--amount N] [--category C] [--domain D] [--draft]
+asa mandate:check [--amount N] [--item N] [--category C] [--domain D] [--draft]
+asa mandate:amend [--per-item N] [--per-order N] [--max-items N] [--total N] [--override-max N] [--from D] [--to D] [--categories "a; b"]
+asa mandate:sign --by "<name> (chat)" --hash <sha256>      # after the principal confirmed the hash in chat
+asa override --amount N --by "<name> (chat)" [--offer-id ID]  # one-time over-limit approval, this run only
 asa run:start --command "buy X up to Y zł" [--mode cdp|mcp]
 asa search --query Q [--source api|serp|state] [--auth client|device] [--limit N]
 asa select --id OFFER_ID --category C --rationale "..."
@@ -60,6 +63,8 @@ session must decide, fix and rerun.
 reasons), `selected.json` (the chosen offer and the agreed ceiling), `step-result.json` (`{flow, step, status,
 url, ts, note, snapshot}`), `snapshot-*.yaml` (redacted a11y snapshots), `report-*.md`.
 
-In **MCP mode** (no dedicated profile), the session performs the browser steps itself through the user's own
-Chrome and still uses the runtime for the mandate check, ranking (`asa search --source state`), the audit log and
-the report; metrics are then labelled as MCP mode.
+In **MCP mode** (`--mode mcp`, no dedicated profile) the session reads pages through the user's own Chrome
+(search, flow recording, attribute reading) and still uses the runtime for the mandate check, ranking
+(`asa search --source state`), the audit log and the report. The address, payment-method and pay steps are never
+driven through the browser extension: they run over the dedicated CDP profile or are handed to the user.
+Metrics are then labelled as MCP mode.

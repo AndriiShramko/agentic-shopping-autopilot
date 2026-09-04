@@ -15,7 +15,9 @@ import { computeMandateHash, normalizeText, parseMandate, type MandateHash } fro
 export interface AmendInput {
   perItemPln?: number;
   perPurchasePln?: number;
+  maxItems?: number;
   aggregatePln?: number;
+  overrideMaxPln?: number;
   validFrom?: string;
   validTo?: string;
   categories?: string[];
@@ -52,7 +54,9 @@ export function amendMandateLimits(mandatePath: string, input: AmendInput): { ha
   };
   if (input.perItemPln !== undefined) setLine(/^-\s*(Лимит одной позиции|Single-item limit)\s*:/u, `- Лимит одной позиции: ≤ ${fmt(input.perItemPln)} PLN`, /^-\s*(Лимит одной покупки|Single-purchase limit)/u);
   if (input.perPurchasePln !== undefined) setLine(/^-\s*(Лимит одной покупки|Single-purchase limit)/u, `- Лимит одной покупки (заказа): ≤ ${fmt(input.perPurchasePln)} PLN`);
+  if (input.maxItems !== undefined) setLine(/^-\s*(Лимит позиций в заказе|Lines per order|Max items per order)\s*:/u, `- Лимит позиций в заказе: ≤ ${Math.trunc(input.maxItems)} шт`, /^-\s*(Совокупный лимит мандата|Aggregate mandate limit)/u);
   if (input.aggregatePln !== undefined) setLine(/^-\s*(Совокупный лимит мандата|Aggregate mandate limit)\s*:/u, `- Совокупный лимит мандата: ≤ ${fmt(input.aggregatePln)} PLN`);
+  if (input.overrideMaxPln !== undefined) setLine(/^-\s*(Разовое подтверждение сверх лимита|One-time approvals?)/u, `- Разовое подтверждение сверх лимита: разрешено до ≤ ${fmt(input.overrideMaxPln)} PLN`, /^-\s*(Срок действия|Validity period)/u);
   if (input.validFrom !== undefined || input.validTo !== undefined) {
     const current = parseMandate(raw).limits;
     const from = isoDate(input.validFrom ?? current.validFrom ?? '');
@@ -123,4 +127,6 @@ export interface OverrideRecord {
   approved_by: string;
   ts: string;
   note?: string;
+  /** When set, the approval applies only to this offer id. */
+  offer_id?: string;
 }

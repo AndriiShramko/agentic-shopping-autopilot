@@ -41,6 +41,10 @@ export interface MandateLimits {
   /** Ceiling for one purchase (order total incl. delivery). */
   perPurchasePln: number;
   aggregatePln: number;
+  /** Optional: maximum number of lines in one order (basket mode). */
+  maxItems?: number;
+  /** Optional: ceiling for a one-time over-limit approval; absent = approvals are not permitted. */
+  overrideMaxPln?: number;
   validFrom: string;
   validTo: string;
   categories: string[];
@@ -93,6 +97,11 @@ const RE_AGGREGATE = new RegExp(
   '^-\\s*(?:Совокупный лимит мандата|Aggregate mandate limit)\\s*:\\s*[≤<=]+\\s*' + NUM + '\\s*PLN\\s*(?:\\(.*\\))?\\s*$',
   'u',
 );
+const RE_MAX_ITEMS = /^-\s*(?:Лимит позиций в заказе|Lines per order|Max items per order)\s*:\s*[≤<=]+\s*(\d+)\s*(?:шт\.?|pcs|lines)?\s*(?:\(.*\))?\s*$/u;
+const RE_OVERRIDE_MAX = new RegExp(
+  '^-\\s*(?:Разовое подтверждение сверх лимита|One-time approvals?(?: over the limits?)?)\\s*:\\s*(?:разрешено до|allowed up to|up to)?\\s*[≤<=]*\\s*' + NUM + '\\s*PLN\\s*(?:\\(.*\\))?\\s*$',
+  'u',
+);
 const RE_VALIDITY = /^-\s*(?:Срок действия|Validity period)\s*:\s*(?:с|from)\s+(\d{4}-\d{2}-\d{2})\s+(?:по|to)\s+(\d{4}-\d{2}-\d{2})\b/u;
 const RE_CATEGORIES = /^-\s*(?:Категории|Categories)\s*:\s*(.+?)\s*$/u;
 const RE_MARKETPLACES = /^-\s*(?:Площадки \(allowlist\)|Marketplaces \(allowlist\))\s*:\s*(.+?)\s*$/u;
@@ -131,6 +140,8 @@ export function parseMandate(raw: string): ParsedMandate {
     if ((m = RE_PER_ITEM.exec(l))) limits.perItemPln = toNumber(m[1]);
     else if ((m = RE_PER_PURCHASE.exec(l))) limits.perPurchasePln = toNumber(m[1]);
     else if ((m = RE_AGGREGATE.exec(l))) limits.aggregatePln = toNumber(m[1]);
+    else if ((m = RE_MAX_ITEMS.exec(l))) limits.maxItems = Number(m[1]);
+    else if ((m = RE_OVERRIDE_MAX.exec(l))) limits.overrideMaxPln = toNumber(m[1]);
     else if ((m = RE_VALIDITY.exec(l))) {
       limits.validFrom = m[1];
       limits.validTo = m[2];
@@ -188,10 +199,13 @@ export interface CheckInput {
   itemPln?: number;
   /**
    * One-time over-limit approval given by the principal in chat for THIS purchase (owner decision
-   * 2026-09-04): amounts up to this value pass the item / purchase / aggregate checks, and the fact is
-   * reported in the check output and the audit log.
+   * 2026-09-04): amounts up to this value pass the item and purchase checks, never the aggregate one,
+   * and only up to the ceiling written in the mandate ("Разовое подтверждение сверх лимита: … ≤ N PLN");
+   * the fact is reported in the check output and the audit log.
    */
   overridePln?: number;
+  /** Number of lines in the order, when the mandate caps it. */
+  itemsCount?: number;
   category?: string;
   domain?: string;
   /** Sum of order_confirmed amounts for this mandate so far (from the audit log). */
@@ -286,13 +300,29 @@ export function checkMandate(input: CheckInput): CheckResult {
   if (parsed.limits.aggregatePln !== undefined) {
     remainingPln = round2(parsed.limits.aggregatePln - (input.spentPln ?? 0));
   }
-  const override = input.overridePln !== undefined && input.overridePln > 0 ? input.overridePln : undefined;
+  // One-time approval: valid only when the mandate carries a ceiling line and the approved amount is within it.
+  let override: number | undefined;
+  if (input.overridePln !== undefined && input.overridePln > 0) {
+    const cap = parsed.limits.overrideMaxPln;
+    if (cap === undefined) {
+      push('override', false, `one-time approval of ${input.overridePln.toFixed(2)} PLN is not permitted: the mandate has no "Разовое подтверждение сверх лимита" ceiling line`);
+    } else if (input.overridePln > cap + 0.001) {
+      push('override', false, `one-time approval ${input.overridePln.toFixed(2)} PLN exceeds the mandate ceiling ${cap} PLN (raise it with mandate:amend --override-max)`);
+    } else {
+      override = input.overridePln;
+      push('override', true, `one-time approval up to ${override.toFixed(2)} PLN (ceiling ${cap} PLN); the aggregate limit is not affected`);
+    }
+  }
   const covered = (value: number): boolean => override !== undefined && value <= override + 0.001;
   const viaOverride = (value: number): string => (covered(value) ? ` (allowed by one-time approval up to ${override?.toFixed(2)} PLN)` : '');
   if (input.itemPln !== undefined && parsed.limits.perItemPln !== undefined) {
     const lim = parsed.limits.perItemPln;
     const ok = input.itemPln <= lim || covered(input.itemPln);
     push('item', ok, `item ${input.itemPln.toFixed(2)} PLN ${input.itemPln <= lim ? '<=' : '>'} per-item limit ${lim}${viaOverride(input.itemPln)}`);
+  }
+  if (input.itemsCount !== undefined && parsed.limits.maxItems !== undefined) {
+    const ok = input.itemsCount <= parsed.limits.maxItems;
+    push('items', ok, `${input.itemsCount} line(s) ${ok ? '<=' : '>'} max ${parsed.limits.maxItems} per order`);
   }
   if (input.amountPln !== undefined) {
     const per = parsed.limits.perPurchasePln;
@@ -303,11 +333,10 @@ export function checkMandate(input: CheckInput): CheckResult {
     if (parsed.limits.aggregatePln !== undefined) {
       const spent = input.spentPln ?? 0;
       const within = round2(input.amountPln + spent) <= parsed.limits.aggregatePln;
-      const ok = within || covered(input.amountPln);
       push(
         'aggregate',
-        ok,
-        `amount ${input.amountPln.toFixed(2)} + spent ${spent.toFixed(2)} ${within ? '<=' : '>'} aggregate limit ${parsed.limits.aggregatePln}${within ? '' : viaOverride(input.amountPln)}`,
+        within,
+        `amount ${input.amountPln.toFixed(2)} + spent ${spent.toFixed(2)} ${within ? '<=' : '>'} aggregate limit ${parsed.limits.aggregatePln}${within ? '' : ' (a one-time approval never covers the aggregate limit)'}`,
       );
     }
   }
@@ -333,7 +362,9 @@ export function checkMandate(input: CheckInput): CheckResult {
 
 function describeLimits(l: Partial<MandateLimits>): string {
   return (
-    `${l.perItemPln !== undefined ? `per-item <= ${l.perItemPln} PLN; ` : ''}per-purchase <= ${l.perPurchasePln} PLN; aggregate <= ${l.aggregatePln} PLN; ` +
+    `${l.perItemPln !== undefined ? `per-item <= ${l.perItemPln} PLN; ` : ''}per-purchase <= ${l.perPurchasePln} PLN; ` +
+    `${l.maxItems !== undefined ? `lines <= ${l.maxItems}; ` : ''}aggregate <= ${l.aggregatePln} PLN; ` +
+    `${l.overrideMaxPln !== undefined ? `one-time approvals up to ${l.overrideMaxPln} PLN; ` : 'one-time approvals: not permitted; '}` +
     `${l.validFrom}..${l.validTo}; categories [${(l.categories ?? []).join('; ')}]; ` +
     `marketplaces [${(l.marketplaces ?? []).join(', ')}]`
   );
