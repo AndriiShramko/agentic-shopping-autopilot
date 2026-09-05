@@ -35,7 +35,7 @@
 1. **You sign a mandate once.** `PURCHASE_MANDATE.md` states limits, categories, marketplaces, validity and a one-time-approval ceiling. The runtime hashes sections 1–6 and refuses to work if a byte changed.
 2. **The agent reads your context first.** `asa context:brief` searches your knowledge store for the need at hand (sizes, models, quantities, what you bought before, what you have at home, sellers to avoid) and writes a local brief with facts, assumptions and open questions. Search and basket planning refuse to run without a fresh brief.
 3. **It searches** the marketplace in your own browser (the site API where it exists), filters by the mandate and ranks offers.
-4. **It plans a basket** that reaches the free-delivery threshold at one seller, adding at most a few complements you have bought before, and shows you one proposal message. You answer with one word, or with nothing if you have chosen full autonomy.
+4. **It plans the basket and fills the cart** — one seller over the free-delivery threshold, at most a few complements you have bought before. Either it shows you one proposal message you approve with one word, or, if your mandate says so, it proceeds without asking.
 5. **It checks the cart** — seller, price, quantity, condition, delivery cost — against the approved plan. Any deviation is a stop.
 6. **It pays** with your saved one-click card. If the bank asks for 3-D Secure, you get a push and the agent waits. If the marketplace shows a CAPTCHA or a block page, the agent stops.
 7. **It logs and reports.** Append-only, redacted audit log; the purchase is appended to your purchase history so the next brief already knows about it.
@@ -83,10 +83,10 @@ Unknowns we state openly: real 3-D Secure frequency over many purchases (one pur
 
 ## Proof: the first live purchase (2026-09-05)
 
-- **What:** fifteen drywall anchors for a TV mount that the owner had put into the cart himself, with the instruction "pay without my participation".
+- **What:** fifteen drywall anchors for a TV mount. The agent had picked the offer the day before from the owner's notes (a research note on heavy loads on drywall) and 53 marketplace offers; the owner's only action was one tap on "add to cart" — the approval step — plus the instruction "pay without my participation".
 - **How:** the agent opened the cart in the owner's own Chrome through the Claude in Chrome extension, went to delivery and payment, found the default payment method set to a bank redirect (unusable for an agent), switched to the saved-card modal, selected a card already saved in the account and clicked pay.
 - **Result:** "purchase paid" in about ten seconds, order under 50 zł, free delivery through the loyalty programme, **no 3-D Secure, no CAPTCHA, no block page**. Confirmed on the marketplace's order page.
-- **Caveats, stated plainly:** the purchase was driven by the agent session through the browser extension; the `asa checkout` steps of the runtime did not execute this particular payment yet. The pay-later rail was not tested. One purchase is a sample of one.
+- **Caveats, stated plainly:** the purchase was driven by the agent session through the browser extension; the `asa checkout` steps of the runtime did not execute this particular payment yet. In this run the owner approved the cart with one tap; the mandate can also authorize buying without that step. The pay-later rail was not tested. One purchase is a sample of one.
 
 What changed because of it: the checkout model gained a "select saved card" step, the earlier note claiming that the extension refuses purchases was corrected, and a dedicated browser profile is no longer required.
 

@@ -62,7 +62,7 @@ Agentic Shopping Autopilot is alpha software that spends your money. This page i
 
 | Area | Status |
 |---|---|
-| Live purchases | one real end-to-end autonomous payment (Allegro.pl, under 50 PLN, saved card, no bank challenge) |
+| Live purchases | one real end-to-end autonomous payment (Allegro.pl, under 50 PLN, saved card, no bank challenge); the agent picked the offer from the owner's notes, the owner approved the cart with one tap, the agent paid |
 | Runtime CLI vs live purchase | the purchase was driven through the browser extension by the agent session; the `asa checkout` steps did not execute that payment yet |
 | Marketplaces | Allegro.pl only; OLX.pl planned (native escrow flow) |
 | Payment rails | saved one-click card verified; in-platform pay-later not tested |
