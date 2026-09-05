@@ -152,7 +152,9 @@ describe('checkout steps on synthetic pages', () => {
     expect(w.waitedMs).toBeGreaterThanOrEqual(2500);
   });
 
-  it('state dir lives under runtime/.state', () => {
-    expect(STATE_DIR.replace(/\\/g, '/')).toMatch(/\/runtime\/\.state$/);
+  it('state dir is runtime/.state unless ASA_STATE_DIR moves it (the test run moves it to a scratch folder)', () => {
+    const moved = process.env.ASA_STATE_DIR && process.env.ASA_STATE_DIR.trim();
+    if (moved) expect(STATE_DIR).toBe(path.resolve(moved));
+    else expect(STATE_DIR.replace(/\\/g, '/')).toMatch(/\/runtime\/\.state$/);
   });
 });

@@ -104,6 +104,23 @@ The detector distinguishes two kinds of signal. **Hard stops** are not scored: a
 | | Full addresses of third parties |
 | | Contents of the OS keychain |
 
+### 3.4 What the context module reads from your notes, and what never leaves the machine
+
+The context-first gate (`runtime/src/context/`, user guide section 4) makes the runtime read the user's own knowledge stores — an Obsidian vault, the shopping-profile files, plain folders — before every search. Those stores hold far more than shopping facts, so the module is built on the assumption that a vault contains health records, finances, mail dumps, chat archives and third-party personal data, and that anything it lets out reaches the operator session's transcript.
+
+**Data classes and their treatment**
+
+| Class | Examples | Treatment |
+|---|---|---|
+| Never opened | anything outside the allow-list (`00 - Inbox`, `01 - Projects`, `02 - Areas`, `03 - Resources`, `Daily`; `CONTEXT_INCLUDE` replaces it); the default excludes (archive, health, finance, mail, relationship, chat-archive, deployment and memory folders; bank, broker, passport and treatment notes; index and changelog notes; `.log/`), which `CONTEXT_EXCLUDE` can extend but not remove; the hard excludes (names starting with the lock glyph, compared on the NFC basename; `secrets/`; `.git/`; dot-folders; `.jsonl` inside a vault; files over 512 KB; symbolic links and junctions); notes with `asa_context: no`, a `sensitive` / `private` / `health` / `family` tag or `status: archived` / `done` | not listed, not stat-ed beyond the directory entry, not read |
+| Read but dropped | any line that carries a postal code, phone, parcel-locker code, NIP, IBAN, e-mail, 16-digit card number, checksum-valid PESEL, passport-like id, date of birth or a secret word (`password`, `пароль`, `hasło`, `passwd`, `token`, `api key`, `secret`, `PIN`) | dropped before the brief; only a count (`dropped_pii`) survives, in the brief and the audit log |
+| Read and kept | the remaining matching lines, with the `REF_*` recipient values replaced by `[REDACTED]` | `.state/context-brief.json` (gitignored) and the stdout digest the session reads; at most `CONTEXT_MAX_SNIPPETS` lines per need, `CONTEXT_MAX_PER_FILE` per note |
+| Written by the session | facts, assumptions, open questions, derived search strings (`asa context:note`) | refused when they carry any of the classes above (exit 1); stored in the brief only |
+
+**What never leaves the machine.** The stores are read by the local runtime over the local file system; nothing is sent to the marketplace, to a cloud service or to git. The audit log (raw and the redacted export that goes into the private repo) records for the context events only counts, snippet ids, hashes (`brief_hash`, `store_fingerprint`), need labels, file names and the reason codes — never a snippet text, a note text or a store path; store roots appear as `kind:basename` on stdout and as a hash in the index cache. The report (`asa report`) prints the facts and assumptions of the current run's brief from the local state file, not from the audit log.
+
+**Honest limit.** The operator session has file-system access and could write `.state/context-brief.json` itself. The gate therefore guarantees a workflow (no CLI path to a search or a plan without a brief, a recorded query and a note for every gap; a bypass only with `CONTEXT_OPTIONAL=1` in `config.env` and an audited code) and visibility (`asa metrics` counts briefs, facts, assumptions, critical questions and skips), not confinement. Confinement of the session is the harness's job — its permission rules and the prompt before `mandate:*` and `override`.
+
 ## 4. Threat model on one page
 
 **Assets:** the Allegro and OLX accounts, the payment method, the money covered by the mandate, cookies and sessions, personal data (delivery address), and the reputation of the account.

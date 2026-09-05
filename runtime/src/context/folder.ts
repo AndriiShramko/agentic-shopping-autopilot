@@ -1,58 +1,37 @@
 /**
  * Plain-folder adapter: any directory of `.md`, `.txt` and `.json` files (JSON is pretty-printed so
- * that each field is one line). The same hard excludes as the vault adapter apply; frontmatter is
- * skipped but carries no weight here.
+ * that each field is one line). The whole folder is read (no allow-list; CONTEXT_INCLUDE applies to
+ * vaults only), but the same hard and default excludes as the vault adapter apply, and frontmatter is
+ * skipped and read for the note date and the opt-out key only — it carries no weight here.
  */
-import { recencyBoost, termMatchers } from './match.js';
-import { HARD_EXCLUDES, parseFrontmatter, rankSnippets } from './obsidian.js';
-import { compileExcludes, readTextCapped, scanText, walkFiles, type WalkedFile } from './scan.js';
-import { storeLabel, type ContextQuery, type KnowledgeStore, type Snippet } from './store.js';
+import { FileStore, type FileAnalysis, type FileStoreOptions } from './files.js';
+import { DEFAULT_EXCLUDES, HARD_EXCLUDES, noteDate, optedOut, parseFrontmatter } from './obsidian.js';
 
 export const FOLDER_EXTS: readonly string[] = ['.md', '.txt', '.json'];
 
-export class FolderStore implements KnowledgeStore {
-  readonly kind = 'folder' as const;
-  readonly id: string;
-  private readonly excludes: RegExp[];
-  private files?: WalkedFile[];
-
-  constructor(
-    readonly root: string,
-    excludes: readonly string[] = [],
-  ) {
-    this.id = storeLabel('folder', root);
-    this.excludes = compileExcludes([...HARD_EXCLUDES.filter((p) => !p.endsWith('.jsonl')), ...excludes]);
+export class FolderStore extends FileStore {
+  constructor(root: string, opts: FileStoreOptions | readonly string[] = {}) {
+    const o: FileStoreOptions = Array.isArray(opts) ? { exclude: opts as readonly string[] } : (opts as FileStoreOptions);
+    super('folder', root, [...HARD_EXCLUDES.filter((p) => !p.endsWith('.jsonl')), ...DEFAULT_EXCLUDES], undefined, { ...o, include: undefined });
   }
 
-  list(): WalkedFile[] {
-    if (!this.files) this.files = walkFiles(this.root, FOLDER_EXTS, this.excludes);
-    return this.files;
+  protected exts(): readonly string[] {
+    return FOLDER_EXTS;
   }
 
-  describe(): { root: string; files: number } {
-    return { root: this.root, files: this.list().length };
-  }
-
-  retrieve(q: ContextQuery): Snippet[] {
-    const matchers = termMatchers(q.terms);
-    if (!matchers.length) return [];
-    const found: Snippet[] = [];
-    for (const f of this.list()) {
-      let text = readTextCapped(f.abs, f.size);
-      if (text === undefined) continue;
-      let startLine = 0;
-      if (f.rel.toLowerCase().endsWith('.json')) {
-        try {
-          text = JSON.stringify(JSON.parse(text), null, 2);
-        } catch {
-          /* not valid JSON: scan it as text */
-        }
-      } else if (f.rel.toLowerCase().endsWith('.md')) {
-        startLine = parseFrontmatter(text).bodyOffset;
-      }
-      const modified = new Date(f.mtimeMs).toISOString();
-      found.push(...scanText(text, { store: this.id, file: f.rel, modified, matchers, weight: recencyBoost(modified, q.now), startLine }));
+  protected prepare(text: string, rel: string): string {
+    if (!rel.toLowerCase().endsWith('.json')) return text;
+    try {
+      return JSON.stringify(JSON.parse(text), null, 2);
+    } catch {
+      return text;
     }
-    return rankSnippets(found, q.maxSnippets);
+  }
+
+  protected analyse(text: string, rel: string, mtimeMs: number): FileAnalysis {
+    if (!rel.toLowerCase().endsWith('.md')) return { weight: 1, date: new Date(mtimeMs).toISOString(), date_basis: 'mtime', body_offset: 0 };
+    const { fm, bodyOffset } = parseFrontmatter(text);
+    const d = noteDate(fm, mtimeMs);
+    return { weight: optedOut(fm) ? 0 : 1, date: d.date, date_basis: d.basis, body_offset: bodyOffset };
   }
 }

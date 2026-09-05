@@ -26,11 +26,13 @@ export const AUDIT_EVENTS = [
   'basket_planned',
   'basket_approved',
   'complementary_proposed',
-  // Context-first (2026-09-05): counts and hashes only, never snippet texts
+  // Context-first (2026-09-05): counts, ids and hashes only, never snippet or note texts
   'context_brief',
   'context_note',
+  'context_query',
   'context_skipped',
   'context_gate_stop',
+  'context_store_changed',
 ] as const;
 export type AuditEventName = (typeof AUDIT_EVENTS)[number];
 

@@ -561,7 +561,9 @@ export function formatPlan(plan: BasketPlan, proposal: ComplementProposal, opts:
   if (!primary) {
     out.push(tr('plan.no_offer', { runId: opts.runId, needs: plan.needs.join(', ') || '—' }));
     if (opts.contextSkipped) out.push(tr('plan.context_skipped', { reason: opts.contextSkipped }));
+    if (opts.facts && opts.facts.length) out.push(tr('plan.facts', { list: opts.facts.join(', ') }));
     out.push(tr('plan.no_offer_reply'));
+    for (const x of opts.notTaken ?? []) out.push(x);
     return out.join('\n');
   }
   // the two most recent purchases from this seller, oldest first ("bought 21.07 and 05.08")

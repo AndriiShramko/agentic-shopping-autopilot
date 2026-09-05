@@ -4,6 +4,7 @@ config.env
 *.pem
 *.key
 secrets/
+!runtime/tests/fixtures/vault/secrets/
 PURCHASE_MANDATE.md
 MANDATE_REVOKED
 !examples/PURCHASE_MANDATE.template.md

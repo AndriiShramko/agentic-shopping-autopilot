@@ -1,9 +1,29 @@
 /**
- * Post-purchase report and the MVP metrics, computed from the audit log only.
+ * Post-purchase report and the MVP metrics, computed from the audit log only (the report may add the
+ * facts and assumptions of the run's context brief when it is still on disk).
  *   metric (b): order_confirmed.ts - command_received.ts - (3DS done - 3DS start)
  *   metric "share without the user": runs whose order_confirmed happened with no challenge_3ds and no stop
+ *   context: briefs, facts, assumptions, critical questions, gate skips, snippets dropped by the PII filter
  */
 import type { AuditEvent } from './audit.js';
+import type { ContextBrief } from './context/brief.js';
+
+export interface ContextCounts {
+  briefs: number;
+  facts: number;
+  assumptions: number;
+  questions: number;
+  critical_questions: number;
+  queries: number;
+  skips: number;
+  gate_stops: number;
+  pii_dropped: number;
+  store_changed: number;
+}
+
+export function emptyContextCounts(): ContextCounts {
+  return { briefs: 0, facts: 0, assumptions: 0, questions: 0, critical_questions: 0, queries: 0, skips: 0, gate_stops: 0, pii_dropped: 0, store_changed: 0 };
+}
 
 export interface RunSummary {
   run_id: string;
@@ -23,11 +43,12 @@ export interface RunSummary {
   duration_ms?: number;
   confirmed: boolean;
   mode?: string;
+  context: ContextCounts;
 }
 
 export function summarizeRun(events: readonly AuditEvent[], runId: string): RunSummary {
   const ev = events.filter((e) => e.run_id === runId).sort((a, b) => a.ts.localeCompare(b.ts));
-  const s: RunSummary = { run_id: runId, mandate_id: ev[0]?.mandate_id ?? '', challenged: false, challenge_ms: 0, stops: [], confirmed: false };
+  const s: RunSummary = { run_id: runId, mandate_id: ev[0]?.mandate_id ?? '', challenged: false, challenge_ms: 0, stops: [], confirmed: false, context: emptyContextCounts() };
   let start: number | undefined;
   let end: number | undefined;
   let chStart: number | undefined;
@@ -68,6 +89,30 @@ export function summarizeRun(events: readonly AuditEvent[], runId: string): RunS
       case 'stop':
         s.stops.push(String(d.reason ?? 'unknown'));
         break;
+      case 'context_brief':
+        s.context.briefs++;
+        if (typeof d.dropped_pii === 'number') s.context.pii_dropped += d.dropped_pii;
+        break;
+      case 'context_note':
+        if (d.kind === 'fact') s.context.facts++;
+        else if (d.kind === 'assumption') s.context.assumptions++;
+        else if (d.kind === 'question') {
+          s.context.questions++;
+          if (d.critical === true) s.context.critical_questions++;
+        }
+        break;
+      case 'context_query':
+        s.context.queries++;
+        break;
+      case 'context_skipped':
+        s.context.skips++;
+        break;
+      case 'context_gate_stop':
+        s.context.gate_stops++;
+        break;
+      case 'context_store_changed':
+        s.context.store_changed++;
+        break;
     }
   }
   if (start !== undefined && end !== undefined) s.duration_ms = Math.max(0, end - start - s.challenge_ms);
@@ -75,7 +120,8 @@ export function summarizeRun(events: readonly AuditEvent[], runId: string): RunS
   return s;
 }
 
-export function formatReport(s: RunSummary): string {
+/** The report; with the run's brief the "Context" section lists the facts (file:line) and the assumptions. */
+export function formatReport(s: RunSummary, brief?: ContextBrief): string {
   const lines: string[] = [];
   lines.push(`# Purchase report — ${s.run_id}`);
   lines.push('');
@@ -89,8 +135,23 @@ export function formatReport(s: RunSummary): string {
   lines.push(`- Order: ${s.order_id ?? '(not confirmed)'}${s.offer_url ? ` — offer ${s.offer_url}` : ''}`);
   lines.push(`- 3DS / bank challenge: ${s.challenged ? `yes (${Math.round(s.challenge_ms / 1000)} s)` : 'no'}`);
   lines.push(`- Stops: ${s.stops.length ? s.stops.join(', ') : 'none'}`);
+  const c = s.context;
+  lines.push(`- Context: ${c.briefs} brief(s), ${c.facts} fact(s), ${c.assumptions} assumption(s), ${c.critical_questions} critical question(s), ${c.skips} gate skip(s), ${c.pii_dropped} snippet(s) dropped (PII)`);
   if (s.duration_ms !== undefined) lines.push(`- Time command → order (3DS excluded): ${(s.duration_ms / 1000).toFixed(0)} s${s.mode ? ` [${s.mode}]` : ''}`);
   lines.push(`- Status: ${s.confirmed ? 'CONFIRMED' : 'NOT CONFIRMED'}`);
+  if (brief && brief.run_id === s.run_id && Object.keys(brief.needs).length) {
+    lines.push('');
+    lines.push('## Context');
+    for (const n of Object.values(brief.needs)) {
+      lines.push('');
+      lines.push(`### ${n.need}`);
+      for (const f of n.facts) lines.push(`- fact: ${f.text} (${f.file ?? '?'}:${f.line ?? '?'})`);
+      for (const a of n.assumptions) lines.push(`- assumption: ${a.text}${a.reason ? ` (${a.reason})` : ''}`);
+      for (const q of n.open_questions) lines.push(`- open question: ${q.text}${q.critical ? ' [critical]' : ''}`);
+      for (const q of n.queries) lines.push(`- query: ${q.query}`);
+      if (!n.facts.length && !n.assumptions.length && !n.open_questions.length && !n.queries.length) lines.push('- (no notes recorded)');
+    }
+  }
   return lines.join('\n') + '\n';
 }
 
@@ -103,6 +164,7 @@ export interface Metrics {
   share_without_human: number | null;
   share_3ds: number | null;
   median_duration_s: number | null;
+  context: ContextCounts;
 }
 
 export function computeMetrics(events: readonly AuditEvent[], mandateId?: string): Metrics {
@@ -114,6 +176,8 @@ export function computeMetrics(events: readonly AuditEvent[], mandateId?: string
   const withStop = sums.filter((s) => s.stops.length > 0);
   const durations = confirmed.map((s) => s.duration_ms).filter((d): d is number => typeof d === 'number').sort((a, b) => a - b);
   const median = durations.length ? durations[Math.floor((durations.length - 1) / 2)] / 1000 : null;
+  const context = emptyContextCounts();
+  for (const s of sums) for (const k of Object.keys(context) as (keyof ContextCounts)[]) context[k] += s.context[k];
   return {
     runs: sums.length,
     confirmed: confirmed.length,
@@ -123,5 +187,6 @@ export function computeMetrics(events: readonly AuditEvent[], mandateId?: string
     share_without_human: sums.length ? Math.round((withoutHuman.length / sums.length) * 1000) / 10 : null,
     share_3ds: sums.length ? Math.round((with3ds.length / sums.length) * 1000) / 10 : null,
     median_duration_s: median === null ? null : Math.round(median),
+    context,
   };
 }

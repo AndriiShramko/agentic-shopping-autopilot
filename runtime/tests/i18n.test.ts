@@ -109,20 +109,24 @@ describe('i18n: English by default, Russian with ASA_LANG=ru, parsers bilingual'
 
   it('loadConfig: ASA_LANG and ASA_CONTEXT_STORES from the environment win over config.env; the private-dir default is platform neutral', () => {
     const dir = tmpDir();
-    writePrivateRepo(dir, MANDATE_LF, { ASA_LANG: 'ru', CONTEXT_STORES: 'obsidian:C:\\vault one;jsonl:D:\\profile', CONTEXT_MAX_SNIPPETS: '12', CONTEXT_EXCLUDE: 'Daily/**;Private/**', CONTEXT_BRIEF_MAX_AGE_MIN: '30' });
+    writePrivateRepo(dir, MANDATE_LF, { ASA_LANG: 'ru', CONTEXT_STORES: 'obsidian:C:\\vault one;jsonl:D:\\profile', CONTEXT_MAX_SNIPPETS: '12', CONTEXT_EXCLUDE: 'Daily/**;Private/**', CONTEXT_BRIEF_MAX_AGE_MIN: '30', CONTEXT_INCLUDE: 'Notes/**;Daily/**', CONTEXT_MAX_PER_FILE: '3', CONTEXT_STALE_DAYS: '90', CONTEXT_OPTIONAL: '1' });
     const fromFile = loadConfig({ privateDir: dir, env: {} });
     expect(fromFile.lang).toBe('ru');
     expect(fromFile.contextStores).toEqual(['obsidian:C:\\vault one', 'jsonl:D:\\profile']);
     expect(fromFile.contextMaxSnippets).toBe(12);
     expect(fromFile.contextBriefMaxAgeMin).toBe(30);
-    expect(fromFile.contextExclude).toEqual(expect.arrayContaining(['04 - Archive/**', '**/\u{1F512}*', 'Daily/**', 'Private/**']));
+    // CONTEXT_EXCLUDE holds the extra globs only; the default and hard excludes are added by the store and cannot be removed
+    expect(fromFile.contextExclude).toEqual(['Daily/**', 'Private/**']);
+    expect(fromFile.contextInclude).toEqual(['Notes/**', 'Daily/**']);
+    expect(fromFile).toMatchObject({ contextMaxPerFile: 3, contextStaleDays: 90, contextOptional: true });
     expect(fromFile.unknownKeys).toEqual([]);
     const fromEnv = loadConfig({ privateDir: dir, env: { ASA_LANG: 'en', ASA_CONTEXT_STORES: 'folder:E:\\notes' } });
     expect(fromEnv.lang).toBe('en');
     expect(fromEnv.contextStores).toEqual(['folder:E:\\notes']);
     expect(loadConfig({ privateDir: dir, env: { ASA_LANG: 'klingon' } }).lang).toBe('ru');
     const empty = loadConfig({ privateDir: tmpDir(), env: {} });
-    expect(empty).toMatchObject({ lang: 'en', contextStores: [], contextMaxSnippets: 40, contextBriefMaxAgeMin: 240 });
+    expect(empty).toMatchObject({ lang: 'en', contextStores: [], contextMaxSnippets: 40, contextBriefMaxAgeMin: 240, contextMaxPerFile: 5, contextStaleDays: 180, contextOptional: false, contextExclude: [] });
+    expect(empty.contextInclude).toBeUndefined();
     expect(DEFAULT_PRIVATE_DIR.replace(/\\/g, '/')).toMatch(/\/\.asa\/private$/);
     expect(path.isAbsolute(DEFAULT_PRIVATE_DIR)).toBe(true);
   });

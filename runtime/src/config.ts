@@ -8,7 +8,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DEFAULT_EXCLUDES } from './context/obsidian.js';
 import { splitSpecs } from './context/store.js';
 import { parseLang, type Lang } from './i18n.js';
 
@@ -35,17 +34,23 @@ export const CONFIG_KEYS = [
   'SHOPPING_PROFILE_DIR',
   'DEFAULT_RAIL',
   'ALLEGRO_LOGIN',
-  // Context-first (2026-09-05): the user's knowledge stores and the brief freshness window
+  // Context-first (2026-09-05): the user's knowledge stores, the allow / deny lists, the brief freshness window
   'CONTEXT_STORES',
-  'CONTEXT_MAX_SNIPPETS',
+  'CONTEXT_INCLUDE',
   'CONTEXT_EXCLUDE',
+  'CONTEXT_MAX_SNIPPETS',
+  'CONTEXT_MAX_PER_FILE',
+  'CONTEXT_STALE_DAYS',
   'CONTEXT_BRIEF_MAX_AGE_MIN',
+  'CONTEXT_OPTIONAL',
   // Language of the strings shown to people (en default, ru); parsers stay bilingual
   'ASA_LANG',
 ] as const;
 export type ConfigKey = (typeof CONFIG_KEYS)[number];
 
 export const DEFAULT_CONTEXT_MAX_SNIPPETS = 40;
+export const DEFAULT_CONTEXT_MAX_PER_FILE = 5;
+export const DEFAULT_CONTEXT_STALE_DAYS = 180;
 export const DEFAULT_CONTEXT_BRIEF_MAX_AGE_MIN = 240;
 
 export type Rail = 'oneclick_card' | 'allegro_pay';
@@ -98,12 +103,20 @@ export interface RuntimeConfig {
   allegroLogin?: string;
   /** Knowledge-store specs ("obsidian:<path>", "jsonl:<path>", "folder:<path>"); ASA_CONTEXT_STORES overrides. */
   contextStores: string[];
-  /** How many snippets a brief keeps (default 40). */
-  contextMaxSnippets: number;
-  /** Extra exclude globs for the stores; the hard excludes (archive, locked notes, tool folders) always apply. */
+  /** Include globs for vault stores (CONTEXT_INCLUDE); undefined = the default allow-list of the adapter. */
+  contextInclude?: string[];
+  /** Extra exclude globs for the stores; the default and hard excludes always apply and cannot be removed. */
   contextExclude: string[];
+  /** How many snippets a need brief keeps (default 40). */
+  contextMaxSnippets: number;
+  /** Snippets per file (default 5). */
+  contextMaxPerFile: number;
+  /** A note older than this many days is flagged stale in the brief (default 180). */
+  contextStaleDays: number;
   /** A brief older than this is stale for the gate (default 240 minutes). */
   contextBriefMaxAgeMin: number;
+  /** CONTEXT_OPTIONAL=1 (an owner decision in config.env) is the only thing that lets `--no-context <code>` pass the gate. */
+  contextOptional: boolean;
   /** Language of the strings shown to people: en (default) or ru; ASA_LANG in the environment overrides. */
   lang: Lang;
   unknownKeys: string[];
@@ -159,6 +172,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): RuntimeConfig {
   const envStores = env.ASA_CONTEXT_STORES && env.ASA_CONTEXT_STORES.trim().length ? env.ASA_CONTEXT_STORES : undefined;
   const envLang = parseLang(env.ASA_LANG);
   const extraExcludes = splitSpecs(nonEmpty('CONTEXT_EXCLUDE') ?? '');
+  const includeRaw = nonEmpty('CONTEXT_INCLUDE');
 
   return {
     privateDir,
@@ -182,9 +196,13 @@ export function loadConfig(opts: LoadConfigOptions = {}): RuntimeConfig {
     defaultRail: railOr(nonEmpty('DEFAULT_RAIL')),
     allegroLogin: nonEmpty('ALLEGRO_LOGIN'),
     contextStores: splitSpecs(envStores ?? nonEmpty('CONTEXT_STORES') ?? ''),
+    contextInclude: includeRaw ? splitSpecs(includeRaw) : undefined,
+    contextExclude: extraExcludes,
     contextMaxSnippets: Math.max(1, Math.trunc(numberOr(nonEmpty('CONTEXT_MAX_SNIPPETS'), DEFAULT_CONTEXT_MAX_SNIPPETS, 'CONTEXT_MAX_SNIPPETS'))),
-    contextExclude: [...DEFAULT_EXCLUDES, ...extraExcludes],
+    contextMaxPerFile: Math.max(1, Math.trunc(numberOr(nonEmpty('CONTEXT_MAX_PER_FILE'), DEFAULT_CONTEXT_MAX_PER_FILE, 'CONTEXT_MAX_PER_FILE'))),
+    contextStaleDays: Math.max(1, numberOr(nonEmpty('CONTEXT_STALE_DAYS'), DEFAULT_CONTEXT_STALE_DAYS, 'CONTEXT_STALE_DAYS')),
     contextBriefMaxAgeMin: Math.max(1, numberOr(nonEmpty('CONTEXT_BRIEF_MAX_AGE_MIN'), DEFAULT_CONTEXT_BRIEF_MAX_AGE_MIN, 'CONTEXT_BRIEF_MAX_AGE_MIN')),
+    contextOptional: (nonEmpty('CONTEXT_OPTIONAL') ?? '0') === '1',
     lang: envLang ?? parseLang(nonEmpty('ASA_LANG')) ?? 'en',
     unknownKeys,
   };

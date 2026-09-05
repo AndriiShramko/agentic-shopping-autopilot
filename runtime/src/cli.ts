@@ -4,11 +4,11 @@
  *
  *   asa mandate:check [--amount N] [--category C] [--domain D] [--draft]
  *   asa run:start --command "..." [--mode cdp|mcp]
- *   asa context:brief --need "<what is being bought>" [--terms a,b,c] [--max N]     # context-first: BEFORE search
- *   asa context:note --fact "..." [--source "[[note]]"] | --assumption "..." [--reason "..."] | --question "..."
- *   asa search --query Q [--source api|serp|state] [--auth client|device] [--limit N] [--need LABEL] [--append] [--category C] [--no-context "<reason>"]
+ *   asa context:brief --need "<what is being bought>" [--terms "a,b;c"] [--max N]   # context-first: BEFORE search (needs run.json)
+ *   asa context:note --need L (--fact T --from "#i,#j" | --assumption T --reason R | --question T [--critical] | --query Q [--from "#i"])
+ *   asa search --query Q [--source api|serp|state] [--auth client|device] [--limit N] [--need LABEL] [--append] [--category C] [--no-context <code>]
  *   asa select --id OFFER_ID --category C --rationale "..."
- *   asa basket:plan [--slack N] [--max-complements N] [--primary "label1;label2"] [--assumptions "a; b"] [--no-context "<reason>"]
+ *   asa basket:plan [--slack N] [--max-complements N] [--primary "label1;label2"] [--assumptions "a; b"] [--no-context <code>]
  *   asa basket:approve --reply "<the user's one reply>" --by "<name> (chat)"
  *   asa profile:check
  *   asa checkout --step N [--rail oneclick_card|allegro_pay]
@@ -32,8 +32,10 @@ import { applyReply, formatPlan, parseReply, planBaskets, proposeComplements, ro
 import { connectChannelB, detectBlock, detectLoggedIn } from './browser.js';
 import { runStep, STEP_NAMES, type Rail, type SelectedOffer } from './checkout.js';
 import { loadConfig, refValues, writeConfigValues, type RuntimeConfig } from './config.js';
-import { addNote, BRIEF_FILE, buildBrief, checkContextGate, formatBriefDigest, writeBrief, type ContextBrief, type NoteKind, type RunContextRef } from './context/brief.js';
-import { parseStoreSpecs, storeRootExists } from './context/store.js';
+import { addNote, BRIEF_FILE, buildNeedBrief, checkContextGate, formatBriefDigest, readBrief, storeChanged, storesFingerprint, upsertBrief, writeBrief, type ContextBrief, type NeedBrief, type NoteKind, type RunContextRef } from './context/brief.js';
+import { IndexCache } from './context/cache.js';
+import { assertNoteClean } from './context/privacy.js';
+import { parseStoreSpecs, splitTerms, storeRootExists, type KnowledgeStore } from './context/store.js';
 import { money, setLang, t } from './i18n.js';
 import { checkMandate, formatCheck, type MandateLimits } from './mandate.js';
 import { coerceOffer, type Offer } from './offers.js';
@@ -95,6 +97,28 @@ function currentRun(cfg: ReturnType<typeof loadConfig>): RunState {
   if (r) return r;
   const res = checkMandate({ config: cfg, requireSigned: false });
   return { run_id: newRunId(), mandate_id: res.mandateId ?? 'unknown', started: new Date().toISOString(), mode: 'cdp' };
+}
+
+/**
+ * The context-first commands never fabricate a run id: without `.state/run.json` they stop with
+ * `context_missing` / `no_run` (exit 2) and tell the session to run `asa run:start` first.
+ */
+function requireRun(cfg: RuntimeConfig, audit: AuditLog, flow: string): RunState | undefined {
+  const r = readState<RunState>('run.json');
+  if (r) return r;
+  const res = checkMandate({ config: cfg, requireSigned: false });
+  const hint = 'run: asa run:start --command "<what the user asked>" first';
+  audit.append({ run_id: 'no-run', mandate_id: res.mandateId ?? 'unknown', event: 'context_gate_stop', flow, data: { reason: 'no_run' } });
+  recordStop(audit, { run_id: 'no-run', mandate_id: res.mandateId ?? 'unknown', flow }, 'context_missing', { gate: 'no_run', hint });
+  process.stderr.write(hint + '\n');
+  return undefined;
+}
+
+/** The knowledge stores of this run, sharing one index cache in .state/. */
+function contextStores(cfg: RuntimeConfig): { stores: KnowledgeStore[]; cache: IndexCache } {
+  const cache = new IndexCache(statePath('context-index.json'));
+  const stores = parseStoreSpecs(cfg.contextStores, { include: cfg.contextInclude, exclude: cfg.contextExclude, cache });
+  return { stores, cache };
 }
 
 /** .state/offers.json — one search, or several needs appended with `search --need L --append`. */
@@ -165,32 +189,68 @@ function mandateLimits(cfg: RuntimeConfig, audit: AuditLog, run: RunState): { li
 interface GateOutcome {
   /** Exit code when the run must stop (stop reason context_missing). */
   stop?: number;
-  /** The reason given with --no-context when the gate was bypassed (audited as context_skipped). */
+  /** The code given with --no-context when the gate was bypassed (audited as context_skipped). */
   skipped?: string;
   brief?: ContextBrief;
+  /** The need briefs the gate matched (one per label). */
+  needs?: NeedBrief[];
+  /** Labels with a critical open question (basket:plan leaves them out of the plan). */
+  critical?: string[];
 }
 
+/** The only codes `--no-context` accepts, and only when CONTEXT_OPTIONAL=1 is set in config.env. */
+const NO_CONTEXT_CODES: ReadonlySet<string> = new Set(['repeat_purchase', 'owner_said_in_chat', 'diagnostic']);
+
 /**
- * Hard context gate (context-first, 2026-09-05): `search` and `basket:plan` run only when a fresh brief
- * for this need exists in this run (`asa context:brief`). `--no-context "<reason>"` bypasses the gate
- * with a written reason; the bypass is audited and the proposal says so.
+ * Hard context gate (context-first): `search` and `basket:plan` run only when a brief of this run holds
+ * this need (exact label), the brief is fresh, the need has hits or recorded notes, no critical question
+ * is open (unless the caller handles those) and — for a search — the query was derived and recorded
+ * with `context:note --query`. `--no-context <code>` passes only with CONTEXT_OPTIONAL=1 in config.env
+ * (an owner decision) and a known code; the bypass is audited and the proposal says so.
  */
-function contextGate(cfg: RuntimeConfig, audit: AuditLog, run: RunState, need: string, args: Args, flow: string): GateOutcome {
-  const g = checkContextGate(run, need, { maxAgeMin: cfg.contextBriefMaxAgeMin, storesConfigured: cfg.contextStores.length > 0 });
-  if (g.ok) return { brief: g.brief };
+function contextGate(cfg: RuntimeConfig, audit: AuditLog, run: RunState, need: string, args: Args, flow: string, extra: { query?: string; allowCritical?: boolean } = {}): GateOutcome {
+  const g = checkContextGate(run, need, { maxAgeMin: cfg.contextBriefMaxAgeMin, storesConfigured: cfg.contextStores.length > 0, query: extra.query, allowCritical: extra.allowCritical });
+  if (g.ok) {
+    // a store that changed since the brief was built is a warning, not a stop
+    try {
+      const { stores } = contextStores(cfg);
+      if (storeChanged(g.brief, stores)) {
+        audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'context_store_changed', flow, data: { need, brief_hash: g.brief.brief_hash } });
+        process.stderr.write('warning: the knowledge stores changed since the brief was built — rerun asa context:brief if the change matters\n');
+      }
+    } catch {
+      /* a store that cannot be listed is reported by context:brief, not here */
+    }
+    return { brief: g.brief, needs: g.needs, critical: g.critical };
+  }
   const skip = args['no-context'];
   if (skip !== undefined) {
-    const reason = typeof skip === 'string' ? skip.trim() : '';
-    if (!reason) throw new Error('--no-context needs a written reason: --no-context "<why the knowledge stores were not consulted>"');
-    audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'context_skipped', flow, data: { reason, gate: g.reason, need } });
-    process.stderr.write(`warning: context gate bypassed (${g.reason}): ${reason}\n`);
-    return { skipped: reason, brief: g.brief };
+    const code = typeof skip === 'string' ? skip.trim() : '';
+    if (cfg.contextOptional && NO_CONTEXT_CODES.has(code)) {
+      audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'context_skipped', flow, data: { reason_code: code, gate: g.reason, need } });
+      process.stderr.write(`warning: context gate bypassed (${g.reason}) with code ${code} — CONTEXT_OPTIONAL=1 is set\n`);
+      return { skipped: code, brief: g.brief };
+    }
+    process.stderr.write(
+      !cfg.contextOptional
+        ? '--no-context is ignored: CONTEXT_OPTIONAL=1 is not set in config.env (only the owner can set it)\n'
+        : `--no-context is ignored: "${code}" is not one of ${Array.from(NO_CONTEXT_CODES).join(', ')}\n`,
+    );
   }
-  const hint =
-    g.reason === 'no_stores'
-      ? 'set CONTEXT_STORES=obsidian:<vault path>[;jsonl:<shopping-profile path>] in config.env, then run: asa context:brief --need "…" --terms …'
-      : `run: asa context:brief --need "${need || '<what is being bought>'}" --terms <synonyms in the languages of the notes, sizes, models>`;
-  audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'context_gate_stop', flow, data: { reason: g.reason, need } });
+  const label = g.need !== undefined && g.need !== '' ? g.need : need || '<what is being bought>';
+  const hints: Record<string, string> = {
+    no_stores: 'set CONTEXT_STORES=obsidian:<vault path>[;jsonl:<shopping-profile path>] in config.env, then run: asa context:brief --need "…" --terms …',
+    no_brief: `run: asa context:brief --need "${label}" --terms "<synonyms in the languages of the notes; sizes; models>"`,
+    run_mismatch: `the brief belongs to another run: rerun asa context:brief --need "${label}" --terms …`,
+    need_missing: `no brief for need "${label}" (labels match exactly): run asa context:brief --need "${label}" --terms …`,
+    empty_without_notes: `the brief for "${label}" has no hits and no notes: add --terms and rerun asa context:brief, or record what is unknown: asa context:note --need "${label}" --assumption "…" --reason "…" | --question "…" [--critical]`,
+    query_not_derived: `the search string was not derived from the brief: record it first with asa context:note --need "${label}" --query "<the exact string>" --from "#<snippet id>"`,
+    stale: `the brief is older than ${cfg.contextBriefMaxAgeMin} min: rerun asa context:brief --need "${label}" --terms …`,
+    critical_open: `need "${label}" has a critical open question: it is not searched and not bought; answer it in the notes and rerun asa context:brief`,
+    no_run: 'run: asa run:start --command "…" first',
+  };
+  const hint = hints[g.reason] ?? hints.no_brief;
+  audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'context_gate_stop', flow, data: { reason: g.reason, need, label: g.need } });
   const code = recordStop(audit, { run_id: run.run_id, mandate_id: run.mandate_id, flow }, 'context_missing', { gate: g.reason, hint });
   process.stderr.write(hint + '\n');
   return { stop: code };
@@ -302,9 +362,11 @@ async function main(argv: string[]): Promise<number> {
       const query = str(args, 'query');
       const source = (str(args, 'source') ?? 'api') as 'api' | 'serp' | 'state';
       if (!query && source !== 'state') throw new Error('--query is required');
-      const run = currentRun(cfg);
-      // context-first: no search without a fresh brief for this need in this run (exit 2, stop context_missing)
-      const gate = contextGate(cfg, audit, run, str(args, 'need') ?? query ?? '', args, 'search');
+      const run = requireRun(cfg, audit, 'search');
+      if (!run) return EXIT.STOP;
+      // context-first: no search without a fresh brief for this need in this run, and the query must have
+      // been derived from it (context:note --query) — exit 2, stop context_missing otherwise
+      const gate = contextGate(cfg, audit, run, str(args, 'need') ?? query ?? '', args, 'search', { query });
       if (gate.stop !== undefined) return gate.stop;
       const mres = checkMandate({ config: cfg, requireSigned: false });
       const perOrder = num(args, 'limit') ?? mres.parsed?.limits.perPurchasePln;
@@ -405,7 +467,8 @@ async function main(argv: string[]): Promise<number> {
 
     case 'basket:plan': {
       // Smart! basket (design synthesis 2026-09-04, section 1): one message, one reply.
-      const run = currentRun(cfg);
+      const run = requireRun(cfg, audit, 'basket');
+      if (!run) return EXIT.STOP;
       const st = readState<OffersState>('offers.json');
       if (!st || !Array.isArray(st.accepted) || st.accepted.length === 0) {
         out('no accepted offers in .state/offers.json: run `asa search --query "<query_pl>" --need <label> --append` for each wishlist line first');
@@ -418,14 +481,23 @@ async function main(argv: string[]): Promise<number> {
         out(formatProfileCheck(check));
         return EXIT.STOP;
       }
-      const accepted = st.accepted as BasketOffer[];
+      let accepted = st.accepted as BasketOffer[];
       const labels = Array.from(new Set(accepted.map((o) => o.need ?? st.query ?? 'need')));
-      // context-first: the brief must cover every need of the basket (one brief per basket)
-      const gate = contextGate(cfg, audit, run, labels.join(';'), args, 'basket');
+      // context-first: the brief must cover every need of the basket (exact labels); a need with a critical
+      // open question is left out of the plan and listed under "not taken", never bought
+      const gate = contextGate(cfg, audit, run, labels.join(';'), args, 'basket', { allowCritical: true });
       if (gate.stop !== undefined) return gate.stop;
       const brief = gate.brief;
+      const critical = new Set(gate.critical ?? []);
+      const criticalLines: string[] = [];
+      for (const label of critical) {
+        const nb = gate.needs?.find((n) => n.need === label);
+        const q = nb?.open_questions.find((x) => x.critical);
+        criticalLines.push(t('plan.critical_unknown', { need: label, question: q?.text ?? '' }));
+      }
+      accepted = accepted.filter((o) => !critical.has(o.need ?? st.query ?? 'need'));
       const primaryArg = str(args, 'primary');
-      const primary = primaryArg ? primaryArg.split(';').map((s) => s.trim()).filter(Boolean) : labels;
+      const primary = (primaryArg ? primaryArg.split(';').map((s) => s.trim()).filter(Boolean) : labels).filter((l) => !critical.has(l));
       const needOf = (label: string): Need => {
         const w = profile.wishlist.find((l) => l.label === label);
         const fromSearch = st.needs?.find((n) => n.need === label);
@@ -464,10 +536,15 @@ async function main(argv: string[]): Promise<number> {
       });
       if (maxComplements <= 0) proposal.shown = [];
       const seller = plan.orders[0]?.seller ?? '';
-      // facts, assumptions and open questions come from the context brief first; --assumptions / --not-taken add to them
-      const facts = brief?.facts_confirmed.map((f) => f.fact) ?? [];
-      const assumptions = [...(brief?.assumptions.map((a) => a.text) ?? []), ...splitList(str(args, 'assumptions'))];
-      const notTaken = [...(brief?.open_questions.map((q) => t('plan.open_question', { text: q.text })) ?? []), ...splitList(str(args, 'not-taken'))];
+      // facts (with file:line), assumptions and open questions come from the need briefs; --assumptions / --not-taken add to them
+      const briefNeeds = gate.needs ?? [];
+      const facts = briefNeeds.flatMap((n) => n.facts.map((f) => (f.file ? `${f.text} (${f.file}:${f.line})` : f.text)));
+      const assumptions = [...briefNeeds.flatMap((n) => n.assumptions.map((a) => a.text)), ...splitList(str(args, 'assumptions')).map((a) => t('plan.session_assumption', { text: a }))];
+      const notTaken = [
+        ...briefNeeds.filter((n) => !critical.has(n.need)).flatMap((n) => n.open_questions.map((q) => t('plan.open_question', { text: q.text }))),
+        ...criticalLines,
+        ...splitList(str(args, 'not-taken')),
+      ];
       const needSources = Object.fromEntries(needs.filter((n) => n.source).map((n) => [n.label, n.source as string]));
       const text = formatPlan(plan, proposal, {
         runId: run.run_id,
@@ -495,6 +572,7 @@ async function main(argv: string[]): Promise<number> {
       if (skipped) process.stderr.write(`complements: ${proposal.shown.length} shown of ${proposal.considered} candidates (skipped: ${skipped}${proposal.skipped.outside_mandate_categories ? '; a candidate needs a mandate category: pass --category to `search --need`' : ''})\n`);
       else if (!proposal.applicable && proposal.reason) process.stderr.write(`complements: not applicable (${proposal.reason})\n`);
       if (plan.uncovered.length) process.stderr.write(`uncovered needs: ${plan.uncovered.join(', ')}\n`);
+      if (critical.size) process.stderr.write(`left out (critical parameter unknown): ${Array.from(critical).join(', ')}\n`);
       if (check.stale) process.stderr.write('profile files are older than 14 days — rebuild them from the vault (asa profile:check)\n');
       return plan.orders.length ? EXIT.OK : EXIT.DECISION;
     }
@@ -616,34 +694,41 @@ async function main(argv: string[]): Promise<number> {
       // `search` / `basket:plan`). The runtime retrieves and gates; the operator session reasons and
       // records its conclusions with `context:note`.
       const need = str(args, 'need')?.trim();
-      if (!need) throw new Error('usage: asa context:brief --need "<what is being bought>" [--terms a,b,c] [--max N]');
-      const run = currentRun(cfg);
+      if (!need) throw new Error('usage: asa context:brief --need "<what is being bought>" [--terms "a,b;c"] [--max N]');
+      const run = requireRun(cfg, audit, 'context');
+      if (!run) return EXIT.STOP;
       const ctx: RunContext = { run_id: run.run_id, mandate_id: run.mandate_id, flow: 'context' };
       if (!cfg.contextStores.length) {
         process.stderr.write('no knowledge stores configured: set CONTEXT_STORES in config.env (e.g. obsidian:<vault path>;jsonl:<shopping-profile path>) or ASA_CONTEXT_STORES in the environment\n');
         return recordStop(audit, ctx, 'context_missing', { gate: 'no_stores' });
       }
-      const stores = parseStoreSpecs(cfg.contextStores, cfg.contextExclude);
+      const { stores, cache } = contextStores(cfg);
       for (const s of stores) if (!storeRootExists(s)) process.stderr.write(`warning: store ${s.id}: root is not a directory, it contributes nothing\n`);
-      const extraTerms = (str(args, 'terms') ?? '')
-        .split(/[,;]/)
-        .map((s) => s.trim())
-        .filter(Boolean);
       const needWords = need.split(/\s+/).filter((w) => w.length >= 3);
-      const terms = Array.from(new Set([...extraTerms, ...needWords]));
+      const terms = Array.from(new Set([...splitTerms(str(args, 'terms')), ...needWords]));
       const max = Math.max(1, Math.trunc(num(args, 'max') ?? cfg.contextMaxSnippets));
       const started = Date.now();
-      const brief = buildBrief(stores, { need, terms, maxSnippets: max, now: new Date() }, redact);
-      brief.run_id = run.run_id;
+      const now = new Date();
+      const built = buildNeedBrief(stores, { need, terms, maxSnippets: max, maxPerFile: cfg.contextMaxPerFile, staleDays: cfg.contextStaleDays, now }, redact);
+      const fingerprint = storesFingerprint(stores);
+      const brief = upsertBrief(readBrief(), built.need, { run_id: run.run_id, stores: built.stores, store_fingerprint: fingerprint, now });
       writeBrief(brief);
-      const context: RunContextRef = { brief_hash: brief.brief_hash, need: brief.need, ts: brief.ts };
+      cache.save();
+      const context: RunContextRef = { brief_hash: brief.brief_hash, needs: Object.keys(brief.needs), built: brief.built };
       writeState('run.json', { ...run, context });
       const ms = Date.now() - started;
-      audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'context_brief', flow: 'context', data: { need, terms: terms.length, stores: brief.stores, snippets: brief.snippets.length, brief_hash: brief.brief_hash, facts: 0, assumptions: 0, open_questions: 0, ms } });
-      out(formatBriefDigest(brief));
-      out(`(${ms} ms; written to .state/${BRIEF_FILE}; run ${run.run_id})`);
-      if (!brief.snippets.length) {
-        process.stderr.write('no snippets: add --terms in the languages of the notes (RU/PL/EN synonyms, sizes, models) or record what is unknown with `asa context:note --question "…"` before searching\n');
+      // counts, ids and hashes only: never a snippet text, never a store path
+      audit.append({
+        run_id: run.run_id,
+        mandate_id: run.mandate_id,
+        event: 'context_brief',
+        flow: 'context',
+        data: { need, terms: terms.length, stores: brief.stores.map((s) => ({ id: s.id, files: s.files })), hits: built.need.hits, dropped_pii: built.need.dropped, brief_hash: brief.brief_hash, store_fingerprint: fingerprint, elapsed_ms: ms },
+      });
+      out(formatBriefDigest(brief, need));
+      out(`(${ms} ms; written to .state/${BRIEF_FILE}; run ${run.run_id}; needs in brief: ${Object.keys(brief.needs).length})`);
+      if (!built.need.snippets.length) {
+        process.stderr.write(`no snippets for "${need}": add --terms in the languages of the notes (RU/PL/EN synonyms, sizes in both × and x, models) and rerun, or record what is unknown with \`asa context:note --need "${need}" --assumption "…" --reason "…"\` / \`--question "…" [--critical]\` — the gate stays closed until one of these exists\n`);
         return EXIT.DECISION;
       }
       return EXIT.OK;
@@ -653,14 +738,22 @@ async function main(argv: string[]): Promise<number> {
       const fact = str(args, 'fact');
       const assumption = str(args, 'assumption');
       const question = str(args, 'question');
-      const given = [fact, assumption, question].filter((v): v is string => v !== undefined);
-      if (given.length !== 1) throw new Error('usage: asa context:note --fact "…" [--source "[[note]]"] | --assumption "…" [--reason "…"] | --question "…"');
-      const kind: NoteKind = fact !== undefined ? 'fact' : assumption !== undefined ? 'assumption' : 'question';
-      const b = addNote(kind, given[0], { source: str(args, 'source'), reason: str(args, 'reason') });
-      const run = currentRun(cfg);
-      // counts and the hash only: the note text may quote the user's notes
-      audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'context_note', flow: 'context', data: { kind, facts: b.facts_confirmed.length, assumptions: b.assumptions.length, open_questions: b.open_questions.length, brief_hash: b.brief_hash } });
-      out(`${kind} recorded in .state/${BRIEF_FILE}: facts ${b.facts_confirmed.length} · assumptions ${b.assumptions.length} · open questions ${b.open_questions.length}`);
+      const query = str(args, 'query');
+      const given = [fact, assumption, question, query].filter((v): v is string => v !== undefined);
+      if (given.length !== 1) throw new Error('usage: asa context:note --need "<label>" (--fact "…" --from "#1,#2" | --assumption "…" --reason "…" | --question "…" [--critical] | --query "<search string>" [--from "#1"])');
+      const kind: NoteKind = fact !== undefined ? 'fact' : assumption !== undefined ? 'assumption' : question !== undefined ? 'question' : 'query';
+      const run = requireRun(cfg, audit, 'context');
+      if (!run) return EXIT.STOP;
+      // a note that carries PII or a secret word is refused (exit 1): the brief must stay clean
+      assertNoteClean(given[0]);
+      if (str(args, 'reason')) assertNoteClean(str(args, 'reason') as string);
+      const r = addNote({ need: str(args, 'need'), kind, text: given[0], from: str(args, 'from'), reason: str(args, 'reason'), critical: args.critical === true });
+      if (r.downgraded) process.stderr.write('warning: --fact without --from "#id" is recorded as an assumption (reason: unsourced); cite the snippet ids of the digest to record a fact\n');
+      // ids, kind and file only: the note text lives in the brief, never in the audit log
+      if (r.kind === 'query') audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'context_query', flow: 'context', data: { need: r.need.need, query: given[0].trim(), from_ids: r.from_ids } });
+      else audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'context_note', flow: 'context', data: { need: r.need.need, kind: r.kind, from_ids: r.from_ids, file: r.file, line: r.line, critical: r.kind === 'question' ? args.critical === true : undefined, downgraded: r.downgraded || undefined } });
+      const n = r.need;
+      out(`${r.kind} recorded for "${n.need}" in .state/${BRIEF_FILE}${r.file ? ` (${r.file}:${r.line})` : ''}: facts ${n.facts.length} · assumptions ${n.assumptions.length} · open questions ${n.open_questions.length} · queries ${n.queries.length}`);
       return EXIT.OK;
     }
 
@@ -759,7 +852,8 @@ async function main(argv: string[]): Promise<number> {
     case 'report': {
       const run = str(args, 'run-id') ?? currentRun(cfg).run_id;
       const s = summarizeRun(audit.readAll(), run);
-      const text = formatReport(s);
+      const brief = readBrief();
+      const text = formatReport(s, brief && brief.run_id === run ? brief : undefined);
       const p = statePath(`report-${run}.md`);
       fs.writeFileSync(p, text, { encoding: 'utf8' });
       out(text);
