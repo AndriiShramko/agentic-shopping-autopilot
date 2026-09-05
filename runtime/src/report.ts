@@ -1,7 +1,7 @@
 /**
  * Post-purchase report and the MVP metrics, computed from the audit log only.
  *   metric (b): order_confirmed.ts - command_received.ts - (3DS done - 3DS start)
- *   metric "share without Andrii": runs whose order_confirmed happened with no challenge_3ds and no stop
+ *   metric "share without the user": runs whose order_confirmed happened with no challenge_3ds and no stop
  */
 import type { AuditEvent } from './audit.js';
 

@@ -1,0 +1,32 @@
+# Agentic Shopping Autopilot
+
+> Open-source layer that lets a user's own AI agent (Claude Code today; Codex, Cursor, Gemini CLI via the same protocol) read the user's knowledge store first, then find, order and pay for goods on real e-commerce sites (Allegro.pl first) under a purchase mandate the user signs once. Runs in the user's own logged-in browser with an already-saved card; never bypasses CAPTCHAs or bank challenges; append-only audit log. First live autonomous purchase verified on 2026-09-05. Apache-2.0 code, CC BY 4.0 docs. Author: Andrii Shramko.
+
+Website: https://agentic-shopping.flyreelstudio.eu
+Repository: https://github.com/AndriiShramko/agentic-shopping-autopilot
+
+## Start here
+
+- [README](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/README.md): what it is, how it works in seven steps, context-first principle, comparison, proof, quickstart, contact.
+- [AGENT_SETUP.md](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/AGENT_SETUP.md): the protocol an AI agent follows to install and configure everything for its user, keep it updated, and uninstall.
+- [AGENTS.md](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/AGENTS.md): repository conventions for coding agents (commands, layout, security rules).
+
+## Specifications
+
+- [Mandate specification](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/docs/mandate-spec.md): PURCHASE_MANDATE.md format, limits, hash, revocation, context clause.
+- [Site-skill specification](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/docs/site-skill-spec.md): SKILL.md, selectors.yaml layers, flows, verification.
+- [Architecture](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/docs/architecture.md): components, build-vs-buy, implementation status.
+- [Allegro.pl skill](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/skills/allegro.pl/SKILL.md): the first site skill (Agent Skills format).
+
+## Safety
+
+- [Warnings](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/docs/warnings.md): what can go wrong — money, marketplace terms, bank, browser, notes, prompt injection.
+- [SECURITY.md](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/SECURITY.md): threat model, what never leaves the machine, disclosure.
+- [Anti-bot policy](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/docs/anti-bot-policy.md): real user browser, human pace, stop on any challenge, no evasion.
+
+## Optional
+
+- [User guide](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/docs/user-guide.md)
+- [Runtime README](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/runtime/README.md): CLI commands, config keys, state files.
+- [Payments](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/docs/payments.md), [Marketplaces](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/docs/marketplaces.md), [Landscape](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/docs/landscape.md)
+- [CONTRIBUTING.md](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/CONTRIBUTING.md), [CHANGELOG.md](https://github.com/AndriiShramko/agentic-shopping-autopilot/blob/main/CHANGELOG.md)

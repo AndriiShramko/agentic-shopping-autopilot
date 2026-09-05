@@ -3,7 +3,7 @@
  *   filter: price + delivery <= per-purchase limit (and <= remaining aggregate), item new,
  *           seller rating >= 98 % or Smart! / Super Seller, Buy-Now only, host allegro.pl
  *   sort:   total cost (price + cheapest delivery) ascending, Smart / Paczkomat preferred on ties
- * Whether an offer matches the item on Andrii's list is NOT decided here: the session decides
+ * Whether an offer matches the item on the user's list is NOT decided here: the session decides
  * and writes its rationale into the audit log (offer_selected.data.rationale).
  */
 import { hostAllowed } from './allowlist.js';

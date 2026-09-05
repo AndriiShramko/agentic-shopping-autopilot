@@ -15,6 +15,7 @@
  * A plan that breaks the per-item / per-order / lines-per-order limits is returned with needs_override
  * and the offending numbers — never trimmed silently.
  */
+import { getLang, money, t, type Lang } from './i18n.js';
 import type { Offer } from './offers.js';
 
 /** Cheapest Smart!-marked method (InPost Paczkomat cap) assumed when a card gives no delivery figure. */
@@ -399,7 +400,8 @@ function dateOf(bb: BoughtBefore): string | undefined {
   return typeof bb === 'object' && bb.date ? bb.date : undefined;
 }
 
-export function fmtDateRu(iso: string | undefined): string {
+/** "2026-08-05" → "05.08" (day.month, the form the proposal uses in every language). */
+export function fmtDate(iso: string | undefined): string {
   const m = iso ? /^(\d{4})-(\d{2})-(\d{2})/.exec(iso) : null;
   return m ? `${m[3]}.${m[2]}` : '';
 }
@@ -491,8 +493,8 @@ export function proposeComplements(plan: BasketPlan, candidates: readonly Basket
       tier = 3;
     }
     const score = 3 * Number(boughtBefore) + 2 * Number(wishlist) + Number(sameCategory);
-    const date = fmtDateRu(dateOf(bb));
-    const reason = boughtBefore ? `покупал у него${date ? ' ' + date : ''}` : wishlist ? 'из списка нужного' : 'та же категория';
+    const date = fmtDate(dateOf(bb));
+    const reason = boughtBefore ? t('reason.bought_before', { date: date ? t('reason.bought_on', { date }) : '' }) : wishlist ? t('reason.wishlist') : t('reason.same_category');
     found.push({ n: 0, tier, score, offer: c, price_pln: round2(c.price_pln), reason, bought_before: boughtBefore, wishlist, same_category: sameCategory, new_subtotal_pln: round2(order.subtotal_pln + c.price_pln) });
   }
   found.sort((a, b) => b.score - a.score || a.price_pln - b.price_pln || a.offer.id.localeCompare(b.offer.id));
@@ -503,14 +505,15 @@ export function proposeComplements(plan: BasketPlan, candidates: readonly Basket
 }
 
 // ---------------------------------------------------------------------------------------------
-// The one-message proposal (Russian)
+// The one-message proposal (English by default, Russian with ASA_LANG=ru — src/i18n.ts)
 
-export function pln(n: number): string {
-  return n.toFixed(2).replace('.', ',');
+/** Money with the decimal separator of the configured language ("12.50" / "12,50"). */
+export function pln(n: number, lang?: Lang): string {
+  return money(n, lang);
 }
 
-function fmtLimit(n: number): string {
-  return Number.isInteger(n) ? String(n) : pln(n);
+function fmtLimit(n: number, lang?: Lang): string {
+  return Number.isInteger(n) ? String(n) : pln(n, lang);
 }
 
 /** A permanent limit worth suggesting instead of repeated one-time approvals. */
@@ -518,7 +521,9 @@ export function suggestLimit(value: number, limit: number): number {
   return Math.max(Math.ceil(value / 10) * 10, limit * 2);
 }
 
-export const RAIL_LABEL_RU: Record<'oneclick_card' | 'allegro_pay', string> = { oneclick_card: 'карта one-click', allegro_pay: 'Allegro Pay' };
+export function railLabel(rail: 'oneclick_card' | 'allegro_pay', lang?: Lang): string {
+  return t(rail === 'allegro_pay' ? 'rail.allegro_pay' : 'rail.oneclick_card', undefined, lang);
+}
 
 export interface FormatOptions {
   runId: string;
@@ -529,107 +534,129 @@ export interface FormatOptions {
   deliveryMethod?: string;
   /** ISO dates of earlier purchases from the primary seller, newest first. */
   purchaseDates?: readonly string[];
-  /** "Допущения из vault" — attributes filled in from the profile, not asked. */
+  /** "Facts from your notes" — confirmed by the context brief (facts_confirmed). */
+  facts?: readonly string[];
+  /** "Assumptions from your notes" — attributes filled in from the stores, not asked. */
   assumptions?: readonly string[];
-  /** need label -> source note ("[[…]]") for "[нужно: …]". */
+  /** need label -> source note ("[[…]]") for "[need: …]". */
   needSources?: Readonly<Record<string, string>>;
-  /** Tail lines: "не взял X: нужен <атрибут> — допишу в профиль, если скажешь". */
+  /** Tail lines: "not derived: X — …" (open questions of the brief) and --not-taken lines. */
   notTaken?: readonly string[];
   /** How many complements may be added (MAX_COMPLEMENTS); shown ones beyond this are alternatives. */
   maxComplements?: number;
+  /** Reason given with --no-context: the header gets a warning line, the proposal says so. */
+  contextSkipped?: string;
+  /** Override the configured language for this message. */
+  lang?: Lang;
 }
 
-export function formatPlanRu(plan: BasketPlan, proposal: ComplementProposal, opts: FormatOptions): string {
+export function formatPlan(plan: BasketPlan, proposal: ComplementProposal, opts: FormatOptions): string {
+  const L = opts.lang ?? getLang();
+  const tr = (key: string, params?: Record<string, string | number>) => t(key, params, L);
+  const m = (n: number) => pln(n, L);
   const out: string[] = [];
   const primary = plan.orders[0];
   const delivery = opts.deliveryMethod ?? 'Paczkomat InPost';
-  const rail = RAIL_LABEL_RU[opts.rail ?? 'oneclick_card'];
+  const rail = railLabel(opts.rail ?? 'oneclick_card', L);
   if (!primary) {
-    out.push(`🛒 Предложение #${opts.runId}: ни один оффер не покрывает нужное (${plan.needs.join(', ') || '—'}).`);
-    out.push('Ответь: «нет» или дай другой запрос.');
+    out.push(tr('plan.no_offer', { runId: opts.runId, needs: plan.needs.join(', ') || '—' }));
+    if (opts.contextSkipped) out.push(tr('plan.context_skipped', { reason: opts.contextSkipped }));
+    out.push(tr('plan.no_offer_reply'));
     return out.join('\n');
   }
-  // the two most recent purchases from this seller, oldest first ("покупал 21.07 и 05.08")
+  // the two most recent purchases from this seller, oldest first ("bought 21.07 and 05.08")
   const dates = Array.from(opts.purchaseDates ?? [])
     .filter((d) => /^\d{4}-\d{2}-\d{2}/.test(d))
     .sort()
     .slice(-2)
-    .map(fmtDateRu);
-  const sellerNote = `${primary.smart_all ? 'Smart!' : 'без Smart!'}${dates.length ? `, покупал ${dates.join(' и ')}` : ', новый продавец'}`;
-  out.push(`🛒 Предложение #${opts.runId} · ${primary.seller || '(продавец неизвестен)'} (${sellerNote}) · ${delivery} · ${rail}`);
+    .map(fmtDate);
+  const smart = (all: boolean) => tr(all ? 'plan.smart' : 'plan.no_smart');
+  const sellerNote = `${smart(primary.smart_all)}, ${dates.length ? tr('plan.bought_dates', { dates: dates.join(tr('plan.and')) }) : tr('plan.new_seller')}`;
+  out.push(tr('plan.header', { runId: opts.runId, seller: primary.seller || tr('plan.seller_unknown'), sellerNote, delivery, rail }));
+  if (opts.contextSkipped) out.push(tr('plan.context_skipped', { reason: opts.contextSkipped }));
 
   const source = (need: string) => opts.needSources?.[need] ?? need;
-  const lineText = (l: PlanLine) => `${l.n}. ${l.title} — ${pln(l.price_pln)}   [нужно: ${source(l.need)}]`;
+  const lineText = (l: PlanLine) => tr('plan.line', { n: l.n, title: l.title, price: m(l.price_pln), source: source(l.need) });
   for (const l of primary.lines) out.push(lineText(l));
   plan.orders.slice(1).forEach((o, i) => {
-    out.push(`Заказ ${i + 2} · ${o.seller} (${o.smart_all ? 'Smart!' : 'без Smart!'}) — отдельная доставка, порог у продавца свой:`);
+    out.push(tr('plan.other_order', { n: i + 2, seller: o.seller, smart: smart(o.smart_all) }));
     for (const l of o.lines) out.push(lineText(l));
   });
 
   const T = plan.threshold_pln;
-  if (primary.free_delivery) out.push(`Товары ${pln(primary.subtotal_pln)} ≥ порога ${pln(T)} → доставка Smart! 0,00.`);
-  else if (primary.smart_all) out.push(`Товары ${pln(primary.subtotal_pln)} → до порога ${pln(T)} не хватает ${pln(primary.delta_pln)}.`);
-  else out.push(`Товары ${pln(primary.subtotal_pln)}; не все позиции Smart! → доставка ${pln(primary.cheapest_delivery_pln)}.`);
+  if (primary.free_delivery) out.push(tr('plan.free', { subtotal: m(primary.subtotal_pln), threshold: m(T) }));
+  else if (primary.smart_all) out.push(tr('plan.gap', { subtotal: m(primary.subtotal_pln), threshold: m(T), delta: m(primary.delta_pln) }));
+  else out.push(tr('plan.not_all_smart', { subtotal: m(primary.subtotal_pln), delivery: m(primary.cheapest_delivery_pln) }));
 
   const [main, ...alts] = proposal.shown;
   if (main) {
-    out.push(`${main.n}. (+) ${main.offer.title} — ${pln(main.price_pln)}  [${main.reason}; ярус ${main.tier}]`);
-    out.push(`A: с п.${main.n} = ${pln(main.new_subtotal_pln)} + доставка 0 = ${pln(main.new_subtotal_pln)} zł  ← по умолчанию     B: без п.${main.n} = ${pln(primary.subtotal_pln)} + ${pln(primary.cheapest_delivery_pln)} = ${pln(primary.expected_pln)} zł`);
-    if (alts.length) out.push(`Ещё можно вместо п.${main.n}: ${alts.map((a) => `${a.n}) ${a.offer.title} — ${pln(a.price_pln)} [ярус ${a.tier}]`).join(' · ')}`);
+    out.push(tr('plan.complement', { n: main.n, title: main.offer.title, price: m(main.price_pln), reason: main.reason, tier: main.tier }));
+    out.push(tr('plan.ab', { n: main.n, newSubtotal: m(main.new_subtotal_pln), subtotal: m(primary.subtotal_pln), delivery: m(primary.cheapest_delivery_pln), expected: m(primary.expected_pln) }));
+    if (alts.length) out.push(tr('plan.alts', { n: main.n, alts: alts.map((a) => tr('plan.alt', { n: a.n, title: a.offer.title, price: m(a.price_pln), tier: a.tier })).join(' · ') }));
   } else if (primary.free_delivery) {
-    out.push(`A: ${pln(primary.subtotal_pln)} + доставка 0 (Smart!) = ${pln(primary.subtotal_pln)} zł  ← по умолчанию`);
+    out.push(tr('plan.free_a', { subtotal: m(primary.subtotal_pln) }));
   } else {
-    const why = proposal.reason === 'delta_over_slack' ? `до порога больше ${pln(proposal.window[1] - proposal.delta_pln)}` : proposal.reason === 'not_smart_order' ? 'не все позиции Smart!' : 'нет подходящего у этого продавца';
-    out.push(`A: ${pln(primary.subtotal_pln)} + доставка ${pln(primary.cheapest_delivery_pln)} = ${pln(primary.expected_pln)} zł  ← по умолчанию (довеска нет: ${why})`);
+    const why = proposal.reason === 'delta_over_slack' ? tr('plan.why_over_slack', { amount: m(proposal.window[1] - proposal.delta_pln) }) : proposal.reason === 'not_smart_order' ? tr('plan.why_not_smart') : tr('plan.why_none');
+    out.push(tr('plan.a_no_complement', { subtotal: m(primary.subtotal_pln), delivery: m(primary.cheapest_delivery_pln), expected: m(primary.expected_pln), why }));
   }
-  if (plan.orders.length > 1) out.push(`Итого по всем заказам: ожидаемо ${pln(plan.expected_pln)} zł, потолок ${pln(plan.ceiling_pln)} zł.`);
+  if (plan.orders.length > 1) out.push(tr('plan.total_all', { expected: m(plan.expected_pln), ceiling: m(plan.ceiling_pln) }));
 
-  out.push(`Допущения из vault: ${opts.assumptions && opts.assumptions.length ? opts.assumptions.join(', ') : 'нет'}.`);
+  if (opts.facts && opts.facts.length) out.push(tr('plan.facts', { list: opts.facts.join(', ') }));
+  out.push(tr('plan.assumptions', { list: opts.assumptions && opts.assumptions.length ? opts.assumptions.join(', ') : tr('plan.none') }));
 
   const lim = (id: LimitId) => plan.limits.find((l) => l.id === id);
-  // one «ок <сумма>» must cover every broken money limit: ask for the largest of the offending amounts
+  // one "ok <amount>" must cover every broken money limit: ask for the largest of the offending amounts
   const required = Math.max(...plan.limits.filter((l) => !l.ok && (l.id === 'per_item' || l.id === 'per_order')).map((l) => l.value), 0);
   for (const l of plan.limits.filter((x) => !x.ok)) {
-    if (l.id === 'per_item') out.push(`⚠️ п.${l.line} ${pln(l.value)} > лимит позиции ${fmtLimit(l.limit)} → ответь «ок ${pln(required)}» (разово) или «лимит позиции ${suggestLimit(l.value, l.limit)}» (навсегда)`);
-    else if (l.id === 'per_order') out.push(`⚠️ заказ ${pln(l.value)} > лимит заказа ${fmtLimit(l.limit)} → ответь «ок ${pln(required)}» (разово) или «лимит заказа ${suggestLimit(l.value, l.limit)}» (навсегда)`);
-    else if (l.id === 'max_items') out.push(`⚠️ позиций ${l.value} > лимит ${l.limit} → ответь «ок без N» (убрать строку) или подними лимит: asa mandate:amend --max-items ${l.value}`);
-    else out.push(`⛔ остаток мандата ${pln(l.limit)} < ${pln(l.value)} — разовое подтверждение совокупный лимит не покрывает; «нет» или новый лимит: asa mandate:amend --total N`);
+    if (l.id === 'per_item') out.push(tr('plan.over_item', { line: l.line ?? '', value: m(l.value), limit: fmtLimit(l.limit, L), required: m(required), suggest: suggestLimit(l.value, l.limit) }));
+    else if (l.id === 'per_order') out.push(tr('plan.over_order', { value: m(l.value), limit: fmtLimit(l.limit, L), required: m(required), suggest: suggestLimit(l.value, l.limit) }));
+    else if (l.id === 'max_items') out.push(tr('plan.over_items', { value: l.value, limit: l.limit }));
+    else out.push(tr('plan.over_aggregate', { limit: m(l.limit), value: m(l.value) }));
   }
 
   const mark = (id: LimitId) => {
     const l = lim(id);
     return l ? (l.ok ? '✔' : '✖') : '—';
   };
-  const L = opts.limits ?? {};
+  const Lm = opts.limits ?? {};
   out.push(
-    `Лимиты: позиция ${L.perItem !== undefined ? `≤${fmtLimit(L.perItem)} ${mark('per_item')}` : 'без лимита'} · заказ ${L.perOrder !== undefined ? `≤${fmtLimit(L.perOrder)} ${mark('per_order')}` : 'без лимита'} · позиций ${L.maxItems !== undefined ? `≤${L.maxItems} ${mark('max_items')}` : 'без лимита'} · остаток мандата ${opts.remainingPln !== undefined ? pln(opts.remainingPln) : '—'}.`,
+    tr('plan.limits', {
+      item: Lm.perItem !== undefined ? `≤${fmtLimit(Lm.perItem, L)} ${mark('per_item')}` : tr('plan.no_limit'),
+      order: Lm.perOrder !== undefined ? `≤${fmtLimit(Lm.perOrder, L)} ${mark('per_order')}` : tr('plan.no_limit'),
+      lines: Lm.maxItems !== undefined ? `≤${Lm.maxItems} ${mark('max_items')}` : tr('plan.no_limit'),
+      remaining: opts.remainingPln !== undefined ? m(opts.remainingPln) : '—',
+    }),
   );
 
   if (plan.aggregate_exceeded) {
-    out.push('Ответь: «нет» · «ок без N» (убрать строку) — сумма сверх остатка мандата не утверждается разовым «ок».');
+    out.push(tr('plan.reply_aggregate'));
   } else if (plan.needs_override) {
     const broken = plan.limits.filter((l) => !l.ok && l.id !== 'aggregate');
     const amount = Math.max(...broken.filter((l) => l.id !== 'max_items').map((l) => l.value), 0);
     const item = broken.find((l) => l.id === 'per_item');
     const order = broken.find((l) => l.id === 'per_order');
     const parts: string[] = [];
-    if (amount > 0) parts.push(`«ок ${pln(amount)}» (разово)`);
-    if (item) parts.push(`«лимит позиции ${suggestLimit(item.value, item.limit)}» (навсегда)`);
-    if (order) parts.push(`«лимит заказа ${suggestLimit(order.value, order.limit)}» (навсегда)`);
-    parts.push('«ок без N»', '«нет»');
-    out.push(`Ответь: ${parts.join(' · ')} — голое «ок» не принимается`);
+    if (amount > 0) parts.push(tr('plan.r_amount', { amount: m(amount) }));
+    if (item) parts.push(tr('plan.r_item_limit_perm', { n: suggestLimit(item.value, item.limit) }));
+    if (order) parts.push(tr('plan.r_order_limit_perm', { n: suggestLimit(order.value, order.limit) }));
+    parts.push(tr('plan.r_without_n'), tr('plan.r_no'));
+    out.push(tr('plan.reply_override', { parts: parts.join(' · ') }));
   } else {
-    const parts = ['«ок» (=A)'];
-    if (main) parts.push('«ок B»', '«ок A/B» (A, если Smart не сработает — B)', `«ок без ${main.n}»`);
-    else if (primary.lines.length > 1) parts.push('«ок без N»');
-    if (alts.length) parts.push(`«ок + ${alts[0].n}»`);
-    parts.push('«нет»');
-    if (L.perItem !== undefined) parts.push(`«лимит позиции ${suggestLimit(L.perItem, L.perItem)}»`);
-    out.push(`Ответь: ${parts.join(' · ')}`);
+    const parts = [tr('plan.r_ok_a')];
+    if (main) parts.push(tr('plan.r_ok_b'), tr('plan.r_ok_ab'), tr('plan.r_without', { n: main.n }));
+    else if (primary.lines.length > 1) parts.push(tr('plan.r_without_n'));
+    if (alts.length) parts.push(tr('plan.r_plus', { n: alts[0].n }));
+    parts.push(tr('plan.r_no'));
+    if (Lm.perItem !== undefined) parts.push(tr('plan.r_item_limit', { n: suggestLimit(Lm.perItem, Lm.perItem) }));
+    out.push(tr('plan.reply', { parts: parts.join(' · ') }));
   }
-  for (const t of opts.notTaken ?? []) out.push(t);
+  for (const x of opts.notTaken ?? []) out.push(x);
   return out.join('\n');
 }
+
+/** @deprecated name kept for readers of the 2026-09-04 design; use formatPlan (language from ASA_LANG). */
+export const formatPlanRu = formatPlan;
+
 
 // ---------------------------------------------------------------------------------------------
 // The one reply
@@ -669,10 +696,11 @@ export function parseReply(text: string, ctx: { needsOverride?: boolean } = {}):
   const r = (kind: ReplyKind, extra: Partial<ParsedReply> = {}): ParsedReply => ({ kind, raw, ...extra });
   if (!s) return r('unknown');
   if (/^(?:нет|no|nie|отмена|стоп|stop|cancel)$/.test(s)) return r('no');
-  let m = new RegExp(`^(?:${OK}\\s*)?(?:лимит|limit)\\s+(позици[ия]|item|line)\\s+(\\d+(?:[.,]\\d{1,2})?)(?:\\s*(?:pln|zł|zl))?$`).exec(s);
-  if (m) return r('limit_item', { amount: toNum(m[2]) });
-  m = new RegExp(`^(?:${OK}\\s*)?(?:лимит|limit)\\s+(заказ[а]?|order)\\s+(\\d+(?:[.,]\\d{1,2})?)(?:\\s*(?:pln|zł|zl))?$`).exec(s);
-  if (m) return r('limit_order', { amount: toNum(m[2]) });
+  // «лимит позиции 120» / "limit item 120" / "item limit 120" (the English proposal uses the last form)
+  let m = new RegExp(`^(?:${OK}\\s*)?(?:(?:лимит|limit)\\s+(?:позици[ия]|item|line)|(?:item|line)\\s+limit)\\s+(\\d+(?:[.,]\\d{1,2})?)(?:\\s*(?:pln|zł|zl))?$`).exec(s);
+  if (m) return r('limit_item', { amount: toNum(m[1]) });
+  m = new RegExp(`^(?:${OK}\\s*)?(?:(?:лимит|limit)\\s+(?:заказ[а]?|order)|order\\s+limit)\\s+(\\d+(?:[.,]\\d{1,2})?)(?:\\s*(?:pln|zł|zl))?$`).exec(s);
+  if (m) return r('limit_order', { amount: toNum(m[1]) });
 
   m = new RegExp(`^${OK}(?:\\s+(.*))?$`).exec(s);
   let rest: string;

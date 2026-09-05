@@ -3,7 +3,9 @@
  *   step-result.json   { flow, step, status, url, ts, note }   after every runtime step
  *   offers.json        normalised offers (flows/search.md, step 3) written by `search`, read by the session
  *   snapshot-*.yaml    redacted a11y snapshots written when a step needs the session's decision (exit 3)
+ *   context-brief.json what the knowledge stores said about the current need (src/context/brief.ts)
  * Nothing in .state/ is committed (gitignored) and every snapshot passes the redaction filter first.
+ * ASA_STATE_DIR moves the directory (tests, a smoke run that must not touch the live state).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -11,7 +13,7 @@ import type { Page } from 'playwright';
 import { redactString } from './redact.js';
 import { RUNTIME_ROOT } from './selectors.js';
 
-export const STATE_DIR = path.join(RUNTIME_ROOT, '.state');
+export const STATE_DIR = process.env.ASA_STATE_DIR && process.env.ASA_STATE_DIR.trim() ? path.resolve(process.env.ASA_STATE_DIR) : path.join(RUNTIME_ROOT, '.state');
 
 export const EXIT = {
   OK: 0,

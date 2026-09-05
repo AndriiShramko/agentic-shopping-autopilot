@@ -22,6 +22,8 @@ export const STOP_REASONS = [
   'domain_not_allowlisted',
   'harness_confirm',
   'human_confirm_flag',
+  /** search / basket:plan without a fresh context brief for this need and run (src/context/brief.ts). */
+  'context_missing',
 ] as const;
 export type StopReason = (typeof STOP_REASONS)[number] | string;
 

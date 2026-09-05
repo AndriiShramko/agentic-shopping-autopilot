@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { setLang } from '../src/i18n.js';
 import {
   applyReply,
   checkLimits,
@@ -34,6 +35,11 @@ function offer(id: string, over: Partial<BasketOffer> & { price_pln: number; sel
     ...over,
   };
 }
+
+// The proposal text of the 2026-09-04 design is Russian: this file runs with ASA_LANG=ru semantics;
+// the English default is covered by tests/i18n.test.ts.
+beforeAll(() => setLang('ru'));
+afterAll(() => setLang('en'));
 
 const T = 49.9;
 const LIMITS = { perItemLimit: 60, perOrderLimit: 100, maxItems: 4, remainingAggregate: 600 };

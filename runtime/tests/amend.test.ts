@@ -1,9 +1,15 @@
 import fs from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { amendMandateLimits, signMandate } from '../src/amend.js';
 import { loadConfig } from '../src/config.js';
+import { setLang } from '../src/i18n.js';
 import { checkMandate, computeMandateHash, parseMandate } from '../src/mandate.js';
 import { MANDATE_LF, tmpDir, writePrivateRepo } from './helpers.js';
+
+// amend / sign write labels in the configured language; this file checks the Russian labels of the
+// original mandate (ASA_LANG=ru), tests/i18n.test.ts checks the English default.
+beforeAll(() => setLang('ru'));
+afterAll(() => setLang('en'));
 
 const NOW = new Date('2026-10-01T10:00:00Z');
 

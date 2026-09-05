@@ -4,9 +4,11 @@
  *
  *   asa mandate:check [--amount N] [--category C] [--domain D] [--draft]
  *   asa run:start --command "..." [--mode cdp|mcp]
- *   asa search --query Q [--source api|serp|state] [--auth client|device] [--limit N] [--need LABEL] [--append] [--category C]
+ *   asa context:brief --need "<what is being bought>" [--terms a,b,c] [--max N]     # context-first: BEFORE search
+ *   asa context:note --fact "..." [--source "[[note]]"] | --assumption "..." [--reason "..."] | --question "..."
+ *   asa search --query Q [--source api|serp|state] [--auth client|device] [--limit N] [--need LABEL] [--append] [--category C] [--no-context "<reason>"]
  *   asa select --id OFFER_ID --category C --rationale "..."
- *   asa basket:plan [--slack N] [--max-complements N] [--primary "label1;label2"] [--assumptions "a; b"]
+ *   asa basket:plan [--slack N] [--max-complements N] [--primary "label1;label2"] [--assumptions "a; b"] [--no-context "<reason>"]
  *   asa basket:approve --reply "<the user's one reply>" --by "<name> (chat)"
  *   asa profile:check
  *   asa checkout --step N [--rail oneclick_card|allegro_pay]
@@ -19,17 +21,20 @@
  *   asa selectors:set ID CSS   |   asa selectors:domain HOST
  *
  * Exit codes: 0 ok · 1 error · 2 STOP (the decision goes to the user) · 3 the session must decide / fix / rerun.
- * Global: --private-dir PATH (or ASA_PRIVATE_DIR).
+ * Global: --private-dir PATH (or ASA_PRIVATE_DIR); ASA_STATE_DIR moves .state/; ASA_LANG=ru for Russian output.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { amendMandateLimits, signMandate, type OverrideRecord } from './amend.js';
 import { AuditLog, newRunId } from './audit.js';
 import { ApiConfigError, ApiNotVerifiedError, getToken, searchListing } from './api.js';
-import { applyReply, formatPlanRu, parseReply, planBaskets, proposeComplements, round2, type BasketOffer, type BasketPlan, type ComplementProposal, type Need } from './basket.js';
+import { applyReply, formatPlan, parseReply, planBaskets, proposeComplements, round2, type BasketOffer, type BasketPlan, type ComplementProposal, type Need } from './basket.js';
 import { connectChannelB, detectBlock, detectLoggedIn } from './browser.js';
 import { runStep, STEP_NAMES, type Rail, type SelectedOffer } from './checkout.js';
 import { loadConfig, refValues, writeConfigValues, type RuntimeConfig } from './config.js';
+import { addNote, BRIEF_FILE, buildBrief, checkContextGate, formatBriefDigest, writeBrief, type ContextBrief, type NoteKind, type RunContextRef } from './context/brief.js';
+import { parseStoreSpecs, storeRootExists } from './context/store.js';
+import { money, setLang, t } from './i18n.js';
 import { checkMandate, formatCheck, type MandateLimits } from './mandate.js';
 import { coerceOffer, type Offer } from './offers.js';
 import { boughtBefore, checkProfileFiles, formatProfileCheck, isBlocked, isConsumableCategory, loadProfile, purchasesFromSeller, recentlyBought, wishlistMatch } from './profile.js';
@@ -81,6 +86,8 @@ interface RunState {
   started: string;
   mode: 'cdp' | 'mcp';
   command?: string;
+  /** Written by `context:brief`: the gate compares it with .state/context-brief.json. */
+  context?: RunContextRef;
 }
 
 function currentRun(cfg: ReturnType<typeof loadConfig>): RunState {
@@ -116,6 +123,9 @@ interface BasketPlanState {
   max_complements: number;
   remaining_pln?: number;
   text: string;
+  /** Hash of the context brief the proposal was built from; absent when the gate was bypassed. */
+  context_brief_hash?: string;
+  context_skipped?: string;
 }
 
 function removeState(...names: string[]): void {
@@ -128,13 +138,13 @@ function removeState(...names: string[]): void {
 /**
  * One-time over-limit approval for the current run (owner decision 2026-09-04): amounts up to the
  * ceiling signed in the mandate, item and order limits only, never the aggregate one. Shared by
- * `asa override` and `basket:approve` («ок <сумма>»).
+ * `asa override` and `basket:approve` ("ok <amount>").
  */
 function recordOverride(cfg: RuntimeConfig, audit: AuditLog, run: RunState, amount: number, by: string, offerId?: string, note?: string): { ok: boolean; message: string } {
   const limits = checkMandate({ config: cfg, requireSigned: false }).parsed?.limits;
   const cap = limits?.overrideMaxPln;
   if (cap === undefined) {
-    return { ok: false, message: 'STOP: the mandate has no one-time approval ceiling line ("Разовое подтверждение сверх лимита: разрешено до ≤ N PLN"); add it with mandate:amend --override-max N and re-sign' };
+    return { ok: false, message: 'STOP: the mandate has no one-time approval ceiling line in section 2 ("One-time approvals over the limit: allowed up to ≤ N PLN"); add it with mandate:amend --override-max N and re-sign' };
   }
   if (amount > cap + 0.001) {
     return { ok: false, message: `STOP: ${amount.toFixed(2)} PLN exceeds the one-time approval ceiling ${cap} PLN; raise it with mandate:amend --override-max and re-sign` };
@@ -152,10 +162,52 @@ function mandateLimits(cfg: RuntimeConfig, audit: AuditLog, run: RunState): { li
   return { limits, spent, remaining };
 }
 
+interface GateOutcome {
+  /** Exit code when the run must stop (stop reason context_missing). */
+  stop?: number;
+  /** The reason given with --no-context when the gate was bypassed (audited as context_skipped). */
+  skipped?: string;
+  brief?: ContextBrief;
+}
+
+/**
+ * Hard context gate (context-first, 2026-09-05): `search` and `basket:plan` run only when a fresh brief
+ * for this need exists in this run (`asa context:brief`). `--no-context "<reason>"` bypasses the gate
+ * with a written reason; the bypass is audited and the proposal says so.
+ */
+function contextGate(cfg: RuntimeConfig, audit: AuditLog, run: RunState, need: string, args: Args, flow: string): GateOutcome {
+  const g = checkContextGate(run, need, { maxAgeMin: cfg.contextBriefMaxAgeMin, storesConfigured: cfg.contextStores.length > 0 });
+  if (g.ok) return { brief: g.brief };
+  const skip = args['no-context'];
+  if (skip !== undefined) {
+    const reason = typeof skip === 'string' ? skip.trim() : '';
+    if (!reason) throw new Error('--no-context needs a written reason: --no-context "<why the knowledge stores were not consulted>"');
+    audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'context_skipped', flow, data: { reason, gate: g.reason, need } });
+    process.stderr.write(`warning: context gate bypassed (${g.reason}): ${reason}\n`);
+    return { skipped: reason, brief: g.brief };
+  }
+  const hint =
+    g.reason === 'no_stores'
+      ? 'set CONTEXT_STORES=obsidian:<vault path>[;jsonl:<shopping-profile path>] in config.env, then run: asa context:brief --need "…" --terms …'
+      : `run: asa context:brief --need "${need || '<what is being bought>'}" --terms <synonyms in the languages of the notes, sizes, models>`;
+  audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'context_gate_stop', flow, data: { reason: g.reason, need } });
+  const code = recordStop(audit, { run_id: run.run_id, mandate_id: run.mandate_id, flow }, 'context_missing', { gate: g.reason, hint });
+  process.stderr.write(hint + '\n');
+  return { stop: code };
+}
+
+function splitList(v: string | undefined): string[] {
+  return (v ?? '')
+    .split(';')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 async function main(argv: string[]): Promise<number> {
   const args = parseArgs(argv);
   const cmd = args._[0];
   const cfg = loadConfig({ argv });
+  setLang(cfg.lang);
   const redact = refValues(cfg);
   const audit = new AuditLog(cfg.privateDir, redact);
   const out = (s: string) => process.stdout.write(s + '\n');
@@ -239,7 +291,8 @@ async function main(argv: string[]): Promise<number> {
       const res = checkMandate({ config: cfg, requireSigned: false });
       const run: RunState = { run_id: newRunId(), mandate_id: res.mandateId ?? 'unknown', started: new Date().toISOString(), mode, command };
       writeState('run.json', run);
-      removeState('offers.json', 'selected.json', 'step-result.json', 'override.json', 'basket-plan.json', 'basket.json');
+      // a new run needs a new brief: the previous one is deleted so that the gate cannot be satisfied by it
+      removeState('offers.json', 'selected.json', 'step-result.json', 'override.json', 'basket-plan.json', 'basket.json', BRIEF_FILE);
       audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'command_received', data: { command, mode } });
       out(`run ${run.run_id} started (mandate ${run.mandate_id}, mode ${mode})`);
       return EXIT.OK;
@@ -250,6 +303,9 @@ async function main(argv: string[]): Promise<number> {
       const source = (str(args, 'source') ?? 'api') as 'api' | 'serp' | 'state';
       if (!query && source !== 'state') throw new Error('--query is required');
       const run = currentRun(cfg);
+      // context-first: no search without a fresh brief for this need in this run (exit 2, stop context_missing)
+      const gate = contextGate(cfg, audit, run, str(args, 'need') ?? query ?? '', args, 'search');
+      if (gate.stop !== undefined) return gate.stop;
       const mres = checkMandate({ config: cfg, requireSigned: false });
       const perOrder = num(args, 'limit') ?? mres.parsed?.limits.perPurchasePln;
       if (perOrder === undefined) throw new Error('per-purchase limit unknown: fill section 2 of the mandate or pass --limit');
@@ -364,6 +420,10 @@ async function main(argv: string[]): Promise<number> {
       }
       const accepted = st.accepted as BasketOffer[];
       const labels = Array.from(new Set(accepted.map((o) => o.need ?? st.query ?? 'need')));
+      // context-first: the brief must cover every need of the basket (one brief per basket)
+      const gate = contextGate(cfg, audit, run, labels.join(';'), args, 'basket');
+      if (gate.stop !== undefined) return gate.stop;
+      const brief = gate.brief;
       const primaryArg = str(args, 'primary');
       const primary = primaryArg ? primaryArg.split(';').map((s) => s.trim()).filter(Boolean) : labels;
       const needOf = (label: string): Need => {
@@ -404,21 +464,25 @@ async function main(argv: string[]): Promise<number> {
       });
       if (maxComplements <= 0) proposal.shown = [];
       const seller = plan.orders[0]?.seller ?? '';
-      const assumptions = str(args, 'assumptions')?.split(';').map((s) => s.trim()).filter(Boolean);
-      const notTaken = str(args, 'not-taken')?.split(';').map((s) => s.trim()).filter(Boolean);
+      // facts, assumptions and open questions come from the context brief first; --assumptions / --not-taken add to them
+      const facts = brief?.facts_confirmed.map((f) => f.fact) ?? [];
+      const assumptions = [...(brief?.assumptions.map((a) => a.text) ?? []), ...splitList(str(args, 'assumptions'))];
+      const notTaken = [...(brief?.open_questions.map((q) => t('plan.open_question', { text: q.text })) ?? []), ...splitList(str(args, 'not-taken'))];
       const needSources = Object.fromEntries(needs.filter((n) => n.source).map((n) => [n.label, n.source as string]));
-      const text = formatPlanRu(plan, proposal, {
+      const text = formatPlan(plan, proposal, {
         runId: run.run_id,
         remainingPln: remaining,
         limits: { perItem: limits.perItemPln, perOrder: limits.perPurchasePln, maxItems: limits.maxItems },
         rail: cfg.defaultRail,
         purchaseDates: purchasesFromSeller(profile.history, seller).map((r) => r.date),
+        facts,
         assumptions,
         needSources,
         notTaken,
         maxComplements,
+        contextSkipped: gate.skipped,
       });
-      const state: BasketPlanState = { run_id: run.run_id, ts: new Date().toISOString(), needs, primary, plan, proposal, threshold_pln: threshold, slack_pln: slack, max_complements: maxComplements, remaining_pln: remaining, text };
+      const state: BasketPlanState = { run_id: run.run_id, ts: new Date().toISOString(), needs, primary, plan, proposal, threshold_pln: threshold, slack_pln: slack, max_complements: maxComplements, remaining_pln: remaining, text, context_brief_hash: brief?.brief_hash, context_skipped: gate.skipped };
       writeState('basket-plan.json', state);
       removeState('basket.json');
       audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'basket_planned', flow: 'basket', data: { seller, orders: plan.orders.length, lines: plan.orders.map((o) => o.lines.map((l) => ({ id: l.id, need: l.need, price_pln: l.price_pln, smart: l.smart }))), subtotal_pln: plan.subtotal_pln, expected_pln: plan.expected_pln, ceiling_pln: plan.ceiling_pln, free_delivery: plan.orders[0]?.free_delivery ?? false, threshold_pln: threshold, needs_override: plan.needs_override, aggregate_exceeded: plan.aggregate_exceeded, uncovered: plan.uncovered, plans_considered: plan.plans_considered } });
@@ -445,7 +509,7 @@ async function main(argv: string[]): Promise<number> {
       if (planState.run_id !== run.run_id) throw new Error(`basket-plan.json belongs to run ${planState.run_id}, current run is ${run.run_id}: rerun asa basket:plan`);
       const parsed = parseReply(reply, { needsOverride: planState.plan.needs_override });
       const again = (why: string): number => {
-        out(`не понял: ${why}`);
+        out(t('approve.not_understood', { why }));
         out(planState.text);
         return EXIT.DECISION;
       };
@@ -454,17 +518,17 @@ async function main(argv: string[]): Promise<number> {
           removeState('basket-plan.json', 'basket.json', 'selected.json', 'override.json');
           audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'stop', flow: 'basket', data: { reason: 'user_declined', reply } });
           writeStepResult({ flow: 'basket', step: 'approve', status: 'stop', url: '', note: 'STOP: user_declined' });
-          out('прогон закрыт: «нет» — ничего не куплено, корзина не собрана');
+          out(t('approve.closed'));
           return EXIT.STOP;
         }
         case 'limit_item':
-          out(`лимит позиции → ${parsed.amount} PLN: выполни\n  asa mandate:amend --per-item ${parsed.amount}\nзатем покажи новый хэш, дождись «ок <hash8>» и выполни asa mandate:sign --by "${by}" --hash <sha256>; после этого повтори asa basket:plan`);
+          out(t('approve.limit_item', { amount: parsed.amount as number, by }));
           return EXIT.DECISION;
         case 'limit_order':
-          out(`лимит заказа → ${parsed.amount} PLN: выполни\n  asa mandate:amend --per-order ${parsed.amount}\nзатем покажи новый хэш, дождись «ок <hash8>» и выполни asa mandate:sign --by "${by}" --hash <sha256>; после этого повтори asa basket:plan`);
+          out(t('approve.limit_order', { amount: parsed.amount as number, by }));
           return EXIT.DECISION;
         case 'unknown':
-          return again(planState.plan.needs_override ? 'предложение требует разового подтверждения суммой («ок <сумма>»), голое «ок» не принимается' : `ответ «${reply}» не распознан`);
+          return again(planState.plan.needs_override ? t('approve.needs_amount') : t('approve.unknown_reply', { reply }));
         default:
           break;
       }
@@ -479,9 +543,9 @@ async function main(argv: string[]): Promise<number> {
       let overridePln: number | undefined;
       if (res.needs_override) {
         const need = res.override_required_pln ?? 0;
-        if (parsed.kind !== 'amount') return again(`после «${reply}» лимиты всё ещё превышены — нужно «ок ${need.toFixed(2).replace('.', ',')}» (разово) или «лимит позиции/заказа N»`);
+        if (parsed.kind !== 'amount') return again(t('approve.still_over', { reply, need: money(need) }));
         const amount = parsed.amount as number;
-        if (amount + 0.001 < need) return again(`«ок ${amount.toFixed(2).replace('.', ',')}» меньше требуемых ${need.toFixed(2).replace('.', ',')} PLN`);
+        if (amount + 0.001 < need) return again(t('approve.amount_too_small', { amount: money(amount), need: money(need) }));
         const r = recordOverride(cfg, audit, run, amount, by, res.override_offer_id, reply);
         if (!r.ok) {
           process.stderr.write(r.message + '\n');
@@ -490,7 +554,7 @@ async function main(argv: string[]): Promise<number> {
         out(r.message);
         overridePln = amount;
       } else if (parsed.kind === 'amount') {
-        out(`(«ок ${(parsed.amount as number).toFixed(2).replace('.', ',')}»: лимиты не превышены, разовое подтверждение не требуется — утверждаю как A)`);
+        out(t('approve.amount_not_needed', { amount: money(parsed.amount as number) }));
       }
       const first = res.items[0];
       const primaryLine = res.items.find((l) => !l.complement) ?? first;
@@ -530,9 +594,73 @@ async function main(argv: string[]): Promise<number> {
       const sel: SelectedOffer = { id: first.id, url: first.url, title: first.title, total_pln: res.ceiling_pln, price_pln: maxLine.price_pln, seller: res.seller, category, rationale, offer_id: first.offer_id };
       writeState('selected.json', sel);
       audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'basket_approved', flow: 'basket', data: { approved_by: by, reply, variant: res.variant, fallback_option: res.fallback_option, seller: res.seller, items: res.items.map((l) => ({ id: l.id, need: l.need, price_pln: l.price_pln, smart: l.smart, complement: l.complement ?? false })), subtotal_pln: res.subtotal_pln, expected_pln: res.expected_pln, ceiling_pln: res.ceiling_pln, free_delivery: res.free_delivery, override_pln: overridePln, category } });
-      out(`корзина утверждена (${res.variant}${res.fallback_option ? ', запасной вариант ' + res.fallback_option : ''}): ${res.items.length} поз. у ${res.seller}, товары ${res.subtotal_pln.toFixed(2)}, ожидаемо ${res.expected_pln.toFixed(2)}, потолок ${res.ceiling_pln.toFixed(2)} PLN${res.free_delivery ? ' (Smart! доставка 0)' : ''}`);
-      if (res.other_orders.length) out(`ещё ${res.other_orders.length} заказ(а) у других продавцов — отдельный прогон каждый`);
-      if (res.items.length > 1) out('(checkout нескольких строк в одном заказе в этом инкременте не реализован: шаги 1–10 ведут первую строку; остальные — вручную или в следующем инкременте)');
+      out(
+        t('approve.approved', {
+          variant: res.variant,
+          fallback: res.fallback_option ? t('approve.fallback', { option: res.fallback_option }) : '',
+          count: res.items.length,
+          seller: res.seller,
+          subtotal: money(res.subtotal_pln),
+          expected: money(res.expected_pln),
+          ceiling: money(res.ceiling_pln),
+          free: res.free_delivery ? t('approve.free') : '',
+        }),
+      );
+      if (res.other_orders.length) out(t('approve.other_orders', { n: res.other_orders.length }));
+      if (res.items.length > 1) out(t('approve.multi_line_note'));
+      return EXIT.OK;
+    }
+
+    case 'context:brief': {
+      // Context-first: the user's knowledge stores are consulted BEFORE any search or plan (hard gate in
+      // `search` / `basket:plan`). The runtime retrieves and gates; the operator session reasons and
+      // records its conclusions with `context:note`.
+      const need = str(args, 'need')?.trim();
+      if (!need) throw new Error('usage: asa context:brief --need "<what is being bought>" [--terms a,b,c] [--max N]');
+      const run = currentRun(cfg);
+      const ctx: RunContext = { run_id: run.run_id, mandate_id: run.mandate_id, flow: 'context' };
+      if (!cfg.contextStores.length) {
+        process.stderr.write('no knowledge stores configured: set CONTEXT_STORES in config.env (e.g. obsidian:<vault path>;jsonl:<shopping-profile path>) or ASA_CONTEXT_STORES in the environment\n');
+        return recordStop(audit, ctx, 'context_missing', { gate: 'no_stores' });
+      }
+      const stores = parseStoreSpecs(cfg.contextStores, cfg.contextExclude);
+      for (const s of stores) if (!storeRootExists(s)) process.stderr.write(`warning: store ${s.id}: root is not a directory, it contributes nothing\n`);
+      const extraTerms = (str(args, 'terms') ?? '')
+        .split(/[,;]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const needWords = need.split(/\s+/).filter((w) => w.length >= 3);
+      const terms = Array.from(new Set([...extraTerms, ...needWords]));
+      const max = Math.max(1, Math.trunc(num(args, 'max') ?? cfg.contextMaxSnippets));
+      const started = Date.now();
+      const brief = buildBrief(stores, { need, terms, maxSnippets: max, now: new Date() }, redact);
+      brief.run_id = run.run_id;
+      writeBrief(brief);
+      const context: RunContextRef = { brief_hash: brief.brief_hash, need: brief.need, ts: brief.ts };
+      writeState('run.json', { ...run, context });
+      const ms = Date.now() - started;
+      audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'context_brief', flow: 'context', data: { need, terms: terms.length, stores: brief.stores, snippets: brief.snippets.length, brief_hash: brief.brief_hash, facts: 0, assumptions: 0, open_questions: 0, ms } });
+      out(formatBriefDigest(brief));
+      out(`(${ms} ms; written to .state/${BRIEF_FILE}; run ${run.run_id})`);
+      if (!brief.snippets.length) {
+        process.stderr.write('no snippets: add --terms in the languages of the notes (RU/PL/EN synonyms, sizes, models) or record what is unknown with `asa context:note --question "…"` before searching\n');
+        return EXIT.DECISION;
+      }
+      return EXIT.OK;
+    }
+
+    case 'context:note': {
+      const fact = str(args, 'fact');
+      const assumption = str(args, 'assumption');
+      const question = str(args, 'question');
+      const given = [fact, assumption, question].filter((v): v is string => v !== undefined);
+      if (given.length !== 1) throw new Error('usage: asa context:note --fact "…" [--source "[[note]]"] | --assumption "…" [--reason "…"] | --question "…"');
+      const kind: NoteKind = fact !== undefined ? 'fact' : assumption !== undefined ? 'assumption' : 'question';
+      const b = addNote(kind, given[0], { source: str(args, 'source'), reason: str(args, 'reason') });
+      const run = currentRun(cfg);
+      // counts and the hash only: the note text may quote the user's notes
+      audit.append({ run_id: run.run_id, mandate_id: run.mandate_id, event: 'context_note', flow: 'context', data: { kind, facts: b.facts_confirmed.length, assumptions: b.assumptions.length, open_questions: b.open_questions.length, brief_hash: b.brief_hash } });
+      out(`${kind} recorded in .state/${BRIEF_FILE}: facts ${b.facts_confirmed.length} · assumptions ${b.assumptions.length} · open questions ${b.open_questions.length}`);
       return EXIT.OK;
     }
 
@@ -663,7 +791,7 @@ async function main(argv: string[]): Promise<number> {
     }
 
     default:
-      out('usage: asa <mandate:check|mandate:amend|mandate:sign|override|run:start|search|select|basket:plan|basket:approve|profile:check|checkout|ref:capture|browser:check|audit:append|audit:redact|report|metrics|selectors:set|selectors:domain> [options]');
+      out('usage: asa <mandate:check|mandate:amend|mandate:sign|override|run:start|context:brief|context:note|search|select|basket:plan|basket:approve|profile:check|checkout|ref:capture|browser:check|audit:append|audit:redact|report|metrics|selectors:set|selectors:domain> [options]');
       return cmd ? EXIT.ERROR : EXIT.OK;
   }
 }

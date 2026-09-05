@@ -41,7 +41,7 @@ export class ApiConfigError extends Error {
 
 function basicAuth(cfg: RuntimeConfig): string {
   if (!cfg.allegroClientId || !cfg.allegroClientSecret) {
-    throw new ApiConfigError('ALLEGRO_CLIENT_ID / ALLEGRO_CLIENT_SECRET not set in config.env (question 5 to Andrii)');
+    throw new ApiConfigError('ALLEGRO_CLIENT_ID / ALLEGRO_CLIENT_SECRET not set in config.env (the user registers the application at apps.developer.allegro.pl)');
   }
   return 'Basic ' + Buffer.from(`${cfg.allegroClientId}:${cfg.allegroClientSecret}`, 'utf8').toString('base64');
 }
@@ -79,7 +79,7 @@ async function tokenRequest(cfg: RuntimeConfig, params: Record<string, string>):
 }
 
 export interface DeviceFlowHooks {
-  /** Called once with the URL Andrii has to open and the code to confirm (printed, not logged). */
+  /** Called once with the URL the user has to open and the code to confirm (printed, not logged). */
   onUserCode: (verificationUriComplete: string, userCode: string) => void;
   sleep?: (ms: number) => Promise<void>;
 }

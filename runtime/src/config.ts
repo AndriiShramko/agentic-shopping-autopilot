@@ -6,9 +6,14 @@
  * They are never printed, never logged and never written anywhere except config.env itself.
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { DEFAULT_EXCLUDES } from './context/obsidian.js';
+import { splitSpecs } from './context/store.js';
+import { parseLang, type Lang } from './i18n.js';
 
-export const DEFAULT_PRIVATE_DIR = 'C:\\dev\\agentic-shopping-autopilot-private';
+/** Platform-neutral default; override with ASA_PRIVATE_DIR or --private-dir. */
+export const DEFAULT_PRIVATE_DIR = path.join(os.homedir(), '.asa', 'private');
 
 /** The only keys config.env may contain (see the operational spec). */
 export const CONFIG_KEYS = [
@@ -30,8 +35,18 @@ export const CONFIG_KEYS = [
   'SHOPPING_PROFILE_DIR',
   'DEFAULT_RAIL',
   'ALLEGRO_LOGIN',
+  // Context-first (2026-09-05): the user's knowledge stores and the brief freshness window
+  'CONTEXT_STORES',
+  'CONTEXT_MAX_SNIPPETS',
+  'CONTEXT_EXCLUDE',
+  'CONTEXT_BRIEF_MAX_AGE_MIN',
+  // Language of the strings shown to people (en default, ru); parsers stay bilingual
+  'ASA_LANG',
 ] as const;
 export type ConfigKey = (typeof CONFIG_KEYS)[number];
+
+export const DEFAULT_CONTEXT_MAX_SNIPPETS = 40;
+export const DEFAULT_CONTEXT_BRIEF_MAX_AGE_MIN = 240;
 
 export type Rail = 'oneclick_card' | 'allegro_pay';
 
@@ -81,6 +96,16 @@ export interface RuntimeConfig {
   defaultRail: Rail;
   /** Expected Allegro account login (compared with the logged-in account; never printed). */
   allegroLogin?: string;
+  /** Knowledge-store specs ("obsidian:<path>", "jsonl:<path>", "folder:<path>"); ASA_CONTEXT_STORES overrides. */
+  contextStores: string[];
+  /** How many snippets a brief keeps (default 40). */
+  contextMaxSnippets: number;
+  /** Extra exclude globs for the stores; the hard excludes (archive, locked notes, tool folders) always apply. */
+  contextExclude: string[];
+  /** A brief older than this is stale for the gate (default 240 minutes). */
+  contextBriefMaxAgeMin: number;
+  /** Language of the strings shown to people: en (default) or ru; ASA_LANG in the environment overrides. */
+  lang: Lang;
   unknownKeys: string[];
 }
 
@@ -122,13 +147,18 @@ export interface LoadConfigOptions {
 }
 
 export function loadConfig(opts: LoadConfigOptions = {}): RuntimeConfig {
-  const privateDir = opts.privateDir ?? resolvePrivateDir(opts.argv, opts.env);
+  const env = opts.env ?? process.env;
+  const privateDir = opts.privateDir ?? resolvePrivateDir(opts.argv, env);
   const configPath = path.join(privateDir, 'config.env');
   const configExists = fs.existsSync(configPath);
   const values = configExists ? parseEnvText(fs.readFileSync(configPath, 'utf8')) : {};
   const known = new Set<string>(CONFIG_KEYS);
   const unknownKeys = Object.keys(values).filter((k) => !known.has(k));
   const nonEmpty = (k: ConfigKey): string | undefined => (values[k] && values[k].length > 0 ? values[k] : undefined);
+  // environment overrides (tests, one-off runs against another vault) take precedence over config.env
+  const envStores = env.ASA_CONTEXT_STORES && env.ASA_CONTEXT_STORES.trim().length ? env.ASA_CONTEXT_STORES : undefined;
+  const envLang = parseLang(env.ASA_LANG);
+  const extraExcludes = splitSpecs(nonEmpty('CONTEXT_EXCLUDE') ?? '');
 
   return {
     privateDir,
@@ -151,6 +181,11 @@ export function loadConfig(opts: LoadConfigOptions = {}): RuntimeConfig {
     shoppingProfileDir: nonEmpty('SHOPPING_PROFILE_DIR') ?? path.join(privateDir, 'shopping-profile'),
     defaultRail: railOr(nonEmpty('DEFAULT_RAIL')),
     allegroLogin: nonEmpty('ALLEGRO_LOGIN'),
+    contextStores: splitSpecs(envStores ?? nonEmpty('CONTEXT_STORES') ?? ''),
+    contextMaxSnippets: Math.max(1, Math.trunc(numberOr(nonEmpty('CONTEXT_MAX_SNIPPETS'), DEFAULT_CONTEXT_MAX_SNIPPETS, 'CONTEXT_MAX_SNIPPETS'))),
+    contextExclude: [...DEFAULT_EXCLUDES, ...extraExcludes],
+    contextBriefMaxAgeMin: Math.max(1, numberOr(nonEmpty('CONTEXT_BRIEF_MAX_AGE_MIN'), DEFAULT_CONTEXT_BRIEF_MAX_AGE_MIN, 'CONTEXT_BRIEF_MAX_AGE_MIN')),
+    lang: envLang ?? parseLang(nonEmpty('ASA_LANG')) ?? 'en',
     unknownKeys,
   };
 }

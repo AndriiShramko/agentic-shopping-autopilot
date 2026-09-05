@@ -15,8 +15,9 @@ import { hostAllowed, hostOf, urlAllowed, DEFAULT_ALLOWLIST } from './allowlist.
 import type { AuditLog } from './audit.js';
 import { detectBlock, detectLoggedIn, sleep } from './browser.js';
 import type { Rail, RuntimeConfig } from './config.js';
-import { checkMandate, formatCheck } from './mandate.js';
+import { checkMandate, formatCheck, warsawDate } from './mandate.js';
 import { parsePln } from './offers.js';
+import { appendPurchase } from './profile.js';
 import { resolveSelector, type SelectorMap } from './selectors.js';
 import { EXIT, readState, writeAriaSnapshot, writeState, writeStepResult, stripQuery, type StepStatus } from './state.js';
 import { StopError, type RunContext } from './stop.js';
@@ -242,7 +243,15 @@ export async function runStep(env: CheckoutEnv, step: number): Promise<StepOutco
       }
       const amount = selected.actual_total_pln ?? selected.total_pln;
       audit.append({ ...ctx, event: 'order_confirmed', flow: FLOW, step, data: { order_id: orderId, amount_pln: amount, seller: selected.seller, offer_url: selected.url, offer_id: selected.offer_id, title: selected.title } });
-      return done('ok', `order ${orderId} confirmed`, { order_id: orderId, amount_pln: amount });
+      // the purchase history the next context brief reads: one line per confirmed order (profile.ts)
+      let historyAppended = false;
+      try {
+        appendPurchase(env.cfg.shoppingProfileDir, { date: warsawDate(), seller: selected.seller, title: selected.title, qty: 1, price_pln: selected.price_pln ?? amount, category: selected.category, offer_id: selected.offer_id, source: 'runtime', order_id: orderId });
+        historyAppended = true;
+      } catch (e) {
+        process.stderr.write(`warning: purchase history not appended: ${(e as Error).message}\n`);
+      }
+      return done('ok', `order ${orderId} confirmed`, { order_id: orderId, amount_pln: amount, history_appended: historyAppended });
     }
     default:
       throw new Error(`unknown checkout step ${step} (1-10)`);

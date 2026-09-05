@@ -305,7 +305,7 @@ export function checkMandate(input: CheckInput): CheckResult {
   if (input.overridePln !== undefined && input.overridePln > 0) {
     const cap = parsed.limits.overrideMaxPln;
     if (cap === undefined) {
-      push('override', false, `one-time approval of ${input.overridePln.toFixed(2)} PLN is not permitted: the mandate has no "Разовое подтверждение сверх лимита" ceiling line`);
+      push('override', false, `one-time approval of ${input.overridePln.toFixed(2)} PLN is not permitted: the mandate has no one-time approval ceiling line in section 2 ("One-time approvals over the limit: allowed up to ≤ N PLN")`);
     } else if (input.overridePln > cap + 0.001) {
       push('override', false, `one-time approval ${input.overridePln.toFixed(2)} PLN exceeds the mandate ceiling ${cap} PLN (raise it with mandate:amend --override-max)`);
     } else {

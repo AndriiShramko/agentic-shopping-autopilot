@@ -123,6 +123,21 @@ describe('checkout steps on synthetic pages', () => {
     expect(confirmed.at(-1)?.data).toMatchObject({ order_id: '1234567890', amount_pln: 24.99, seller: 'sklep_fixture' });
   });
 
+  it('step 10 appends the confirmed order to purchase-history.jsonl (context-first: the next brief reads it)', async () => {
+    await page.goto(fixtureUrl('confirmation.html'));
+    const history = path.join(env.cfg.shoppingProfileDir, 'purchase-history.jsonl');
+    const before = fs.existsSync(history) ? fs.readFileSync(history, 'utf8').split('\n').filter(Boolean).length : 0;
+    const r10 = await runStep(env, 10);
+    expect(r10.status).toBe('ok');
+    expect(r10.data).toMatchObject({ order_id: '1234567890', history_appended: true });
+    const lines = fs.readFileSync(history, 'utf8').split('\n').filter(Boolean);
+    expect(lines).toHaveLength(before + 1);
+    const rec = JSON.parse(lines[lines.length - 1]) as Record<string, unknown>;
+    expect(rec).toMatchObject({ seller: 'sklep_fixture', title: 'Wkręty (fixture)', qty: 1, price_pln: 24.99, category: 'крепёж', source: 'runtime', order_id: '1234567890' });
+    expect(String(rec.date)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(JSON.stringify(rec)).not.toContain('Testowy');
+  });
+
   it('payment wait: declined wording → declined; pending page → timeout', async () => {
     const dir = tmpDir();
     const declined = path.join(dir, 'declined.html');

@@ -10,6 +10,7 @@
  */
 import fs from 'node:fs';
 import { writeConfigValues } from './config.js';
+import { t } from './i18n.js';
 import { computeMandateHash, normalizeText, parseMandate, type MandateHash } from './mandate.js';
 
 export interface AmendInput {
@@ -33,7 +34,11 @@ function isoDate(s: string): string {
   return s;
 }
 
-/** Rewrite section-2 lines in place (Russian labels; new per-item line inserted before the per-purchase line). */
+/**
+ * Rewrite section-2 lines in place. Labels are written in the configured language (English by default,
+ * Russian with ASA_LANG=ru — src/i18n.ts); the parser accepts both, so an existing Russian mandate keeps
+ * working. A new per-item line is inserted before the per-purchase line.
+ */
 export function amendMandateLimits(mandatePath: string, input: AmendInput): { hash: MandateHash; changed: string[] } {
   const raw = fs.readFileSync(mandatePath, 'utf8');
   const lines = normalizeText(raw).split('\n');
@@ -52,19 +57,19 @@ export function amendMandateLimits(mandatePath: string, input: AmendInput): { ha
     }
     changed.push(text);
   };
-  if (input.perItemPln !== undefined) setLine(/^-\s*(Лимит одной позиции|Single-item limit)\s*:/u, `- Лимит одной позиции: ≤ ${fmt(input.perItemPln)} PLN`, /^-\s*(Лимит одной покупки|Single-purchase limit)/u);
-  if (input.perPurchasePln !== undefined) setLine(/^-\s*(Лимит одной покупки|Single-purchase limit)/u, `- Лимит одной покупки (заказа): ≤ ${fmt(input.perPurchasePln)} PLN`);
-  if (input.maxItems !== undefined) setLine(/^-\s*(Лимит позиций в заказе|Lines per order|Max items per order)\s*:/u, `- Лимит позиций в заказе: ≤ ${Math.trunc(input.maxItems)} шт`, /^-\s*(Совокупный лимит мандата|Aggregate mandate limit)/u);
-  if (input.aggregatePln !== undefined) setLine(/^-\s*(Совокупный лимит мандата|Aggregate mandate limit)\s*:/u, `- Совокупный лимит мандата: ≤ ${fmt(input.aggregatePln)} PLN`);
-  if (input.overrideMaxPln !== undefined) setLine(/^-\s*(Разовое подтверждение сверх лимита|One-time approvals?)/u, `- Разовое подтверждение сверх лимита: разрешено до ≤ ${fmt(input.overrideMaxPln)} PLN`, /^-\s*(Срок действия|Validity period)/u);
+  if (input.perItemPln !== undefined) setLine(/^-\s*(Лимит одной позиции|Single-item limit)\s*:/u, t('mandate.per_item', { n: fmt(input.perItemPln) }), /^-\s*(Лимит одной покупки|Single-purchase limit|Single-order limit)/u);
+  if (input.perPurchasePln !== undefined) setLine(/^-\s*(Лимит одной покупки|Single-purchase limit|Single-order limit)/u, t('mandate.per_order', { n: fmt(input.perPurchasePln) }));
+  if (input.maxItems !== undefined) setLine(/^-\s*(Лимит позиций в заказе|Lines per order|Max items per order)\s*:/u, t('mandate.max_items', { n: Math.trunc(input.maxItems) }), /^-\s*(Совокупный лимит мандата|Aggregate mandate limit)/u);
+  if (input.aggregatePln !== undefined) setLine(/^-\s*(Совокупный лимит мандата|Aggregate mandate limit)\s*:/u, t('mandate.aggregate', { n: fmt(input.aggregatePln) }));
+  if (input.overrideMaxPln !== undefined) setLine(/^-\s*(Разовое подтверждение сверх лимита|One-time approvals?)/u, t('mandate.override_max', { n: fmt(input.overrideMaxPln) }), /^-\s*(Срок действия|Validity period)/u);
   if (input.validFrom !== undefined || input.validTo !== undefined) {
     const current = parseMandate(raw).limits;
     const from = isoDate(input.validFrom ?? current.validFrom ?? '');
     const to = isoDate(input.validTo ?? current.validTo ?? '');
-    setLine(/^-\s*(Срок действия|Validity period)\s*:/u, `- Срок действия: с ${from} по ${to}`);
+    setLine(/^-\s*(Срок действия|Validity period)\s*:/u, t('mandate.validity', { from, to }));
   }
-  if (input.categories !== undefined) setLine(/^-\s*(Категории|Categories)\s*:/u, `- Категории: ${input.categories.map((c) => c.trim()).filter(Boolean).join('; ')}`);
-  if (input.marketplaces !== undefined) setLine(/^-\s*(Площадки \(allowlist\)|Marketplaces \(allowlist\))\s*:/u, `- Площадки (allowlist): ${input.marketplaces.join('; ')}`);
+  if (input.categories !== undefined) setLine(/^-\s*(Категории|Categories)\s*:/u, t('mandate.categories', { list: input.categories.map((c) => c.trim()).filter(Boolean).join('; ') }));
+  if (input.marketplaces !== undefined) setLine(/^-\s*(Площадки \(allowlist\)|Marketplaces \(allowlist\))\s*:/u, t('mandate.marketplaces', { list: input.marketplaces.join('; ') }));
 
   // any change invalidates the signature: back to draft until re-signed
   const statusIdx = lines.findIndex((l, k) => k < idx2 && /^status\s*:/.test(l));
@@ -101,15 +106,15 @@ export function signMandate(mandatePath: string, input: SignInput): MandateHash 
   let wroteHash = false;
   for (let i = idx7 + 1; i < lines.length; i++) {
     if (/^Подписано\s*:|^Signed\s*:/u.test(lines[i])) {
-      lines[i] = `Подписано: ${input.signer}, ${input.when}`;
+      lines[i] = t('mandate.signed', { signer: input.signer, when: input.when });
       wroteSigned = true;
     } else if (/SHA-256/.test(lines[i])) {
-      lines[i] = `SHA-256 разделов 1–6: ${h.hash}`;
+      lines[i] = t('mandate.sha', { hash: h.hash });
       wroteHash = true;
     }
   }
-  if (!wroteSigned) lines.splice(idx7 + 1, 0, `Подписано: ${input.signer}, ${input.when}`);
-  if (!wroteHash) lines.splice(idx7 + 2, 0, `SHA-256 разделов 1–6: ${h.hash}`);
+  if (!wroteSigned) lines.splice(idx7 + 1, 0, t('mandate.signed', { signer: input.signer, when: input.when }));
+  if (!wroteHash) lines.splice(idx7 + 2, 0, t('mandate.sha', { hash: h.hash }));
   const idx1 = lines.findIndex((l) => l.startsWith('## 1.'));
   const statusIdx = lines.findIndex((l, k) => k < idx1 && /^status\s*:/.test(l));
   if (statusIdx >= 0) lines[statusIdx] = 'status: signed';
